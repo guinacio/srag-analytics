@@ -48,9 +48,11 @@ You should see:
 - `srag_postgres` - Running on port 5432
 - `srag_backend` - Running on port 8000
 
-### Step 4: Initialize Database
+**Note**: Database tables are automatically created when the backend container starts.
 
-**Important**: The CSV files in `/data` need to be ingested first.
+### Step 4: Ingest Data
+
+**Important**: The CSV files in `/data` need to be ingested.
 
 ```bash
 # Option A: Run from host (if you have Python installed)
@@ -172,8 +174,10 @@ docker-compose up -d --build backend
 # Clean everything (including database)
 docker-compose down -v
 
-# Re-ingest data
+# Re-ingest data (tables auto-create when backend starts)
+docker-compose up -d
 docker-compose exec backend python -m backend.db.ingestion
+docker-compose exec backend python -m backend.db.dictionary_parser
 ```
 
 ## Next Steps

@@ -171,7 +171,6 @@ def main():
     # Header
     st.markdown('<div class="main-header">Painel de Análise de SRAG</div>', unsafe_allow_html=True)
     st.markdown("**Análise com IA para Síndrome Respiratória Aguda Grave (SRAG)**")
-    st.divider()
 
     # Sidebar
     with st.sidebar:

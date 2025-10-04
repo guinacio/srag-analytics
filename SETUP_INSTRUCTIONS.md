@@ -51,29 +51,13 @@ pip install -e .
 
 This installs all dependencies from `pyproject.toml`.
 
-### 4. Initialize Database
+### 4. Ingest Data
+
+**Note**: Database tables are automatically created when the backend container starts (via the startup script). You only need to run the ingestion commands below.
 
 Run these commands **in order**:
 
-#### 4a. Create Database Tables
-
-```bash
-# Option 1: Run locally (recommended)
-python -m backend.db.init_database
-
-# Option 2: Run in Docker container
-docker-compose exec backend python -m backend.db.init_database
-```
-
-Expected output:
-```
-Creating pgvector extension...
-Creating read-only user...
-Creating database tables...
-Database initialization complete!
-```
-
-#### 4b. Ingest SRAG Data
+#### 4a. Ingest SRAG Data
 
 **IMPORTANT**: This step processes ~165,000 rows and takes 5-10 minutes.
 
@@ -98,7 +82,7 @@ Granting read-only permissions...
 Data ingestion complete!
 ```
 
-#### 4c. Parse Data Dictionary
+#### 4b. Parse Data Dictionary
 
 ```bash
 # Option 1: Run locally (recommended)
@@ -185,10 +169,14 @@ docker-compose exec postgres pg_isready -U srag_user
 
 ### Issue: "Relation srag_cases does not exist"
 
-You need to run the initialization first:
+This means the database tables weren't created. Check if the backend started properly:
 
 ```bash
-python -m backend.db.init_database
+# Check backend logs
+docker-compose logs backend | grep "Database initialized"
+
+# If not found, restart backend (tables auto-create on startup)
+docker-compose restart backend
 ```
 
 ### Issue: "ModuleNotFoundError"
@@ -259,8 +247,8 @@ docker-compose up -d --build backend
 # Clean everything (WARNING: deletes data!)
 docker-compose down -v
 
-# Re-run ingestion
-python -m backend.db.init_database
+# Re-run ingestion (tables auto-create on backend start)
+docker-compose up -d
 python -m backend.db.ingestion
 python -m backend.db.dictionary_parser
 ```

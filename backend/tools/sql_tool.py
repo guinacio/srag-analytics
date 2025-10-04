@@ -51,7 +51,7 @@ class SafeSQLTool:
 
         # Initialize LLM for SQL agent
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             temperature=0,
             openai_api_key=settings.openai_api_key,
         )

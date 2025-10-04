@@ -52,26 +52,98 @@ The system follows a **microservices architecture** with:
 - **Streamlit frontend** for interactive dashboards
 - **Docker containers** for backend and database
 
-### Agent Workflow
+### Agent Workflow (LangGraph)
+
+The system uses **LangGraph** to orchestrate a multi-step agentic workflow. Each node performs specific operations and passes state to the next node.
 
 ```mermaid
 graph TD
-    A[User Request] --> B{SRAGReportAgent};
-    B --> C[1. calculate_metrics];
-    C --> D[2. fetch_news];
-    D --> E[3. generate_charts];
-    E --> F[4. write_report];
-    F --> G[5. create_audit];
-    G --> H[Final Report & Audit Trail];
+    A[User Request] --> B[SRAGReportAgent];
+    B --> C[Node 1: calculate_metrics];
+    C --> D[Node 2: fetch_news];
+    D --> E[Node 3: generate_charts];
+    E --> F[Node 4: write_report];
+    F --> G[Node 5: create_audit];
+    G --> H[Return: Report + Audit Trail];
 
-    subgraph "Tool Calls"
-        C --> T1[metrics_tool.py];
-        D --> T2[news_tool.py];
-        E --> T1;
-    end
+    C -.SQL.-> DB[(PostgreSQL)];
+    D -.Tavily API.-> News[News Sources];
+    D -.OpenAI.-> LLM1[gpt-5-mini];
+    E -.SQL.-> DB;
+    F -.OpenAI.-> LLM2[gpt-5];
 
-    subgraph "LLM Call"
-        F --> LLM[gpt-4o];
-    end
+    style C fill:#e1f5fe
+    style D fill:#f3e5f5
+    style E fill:#e8f5e9
+    style F fill:#fff3e0
+    style G fill:#fce4ec
 ```
 
+#### Node Descriptions
+
+**1. `calculate_metrics` Node**
+- **Purpose**: Computes 4 core SRAG metrics from DATASUS database
+- **Calls**: `metrics_tool.calculate_all_metrics(days, state_filter)`
+- **Operations**:
+  - Case increase rate (current vs previous period)
+  - Mortality rate (deaths / total cases)
+  - ICU occupancy rate (ICU admissions / hospitalizations)
+  - Vaccination rate (vaccinated cases / total cases)
+- **Output**: Dictionary with all 4 metrics + metadata
+
+**2. `fetch_news` Node**
+- **Purpose**: Retrieves recent Portuguese news about SRAG
+- **Calls**:
+  - `news_tool.search_srag_news(days, max_results=10)` - Tavily search API
+  - `news_tool._extract_date_with_llm(title, content)` - GPT-5-mini for date extraction
+- **Operations**:
+  - Searches Brazilian news domains (G1, Folha, CNN Brasil, Fiocruz, etc.)
+  - Filters by SRAG-related keywords
+  - Extracts publication dates using LLM when Tavily doesn't provide them
+  - Validates dates are within requested time window
+- **Output**: News citations with title, URL, date, and content preview
+
+**3. `generate_charts` Node**
+- **Purpose**: Prepares time-series data for frontend visualization
+- **Calls**:
+  - `metrics_tool.get_daily_cases_chart_data(days)`
+  - `metrics_tool.get_monthly_cases_chart_data(months=12)`
+- **Operations**:
+  - Queries daily metrics for trend analysis
+  - Aggregates monthly data for 12-month overview
+- **Output**: Chart data arrays for daily and monthly visualizations
+
+**4. `write_report` Node**
+- **Purpose**: Generates human-readable report in Portuguese
+- **Calls**: `ChatOpenAI(model="gpt-5").invoke(messages)`
+- **Operations**:
+  - Synthesizes metrics and news context
+  - Produces structured markdown report (~500 words)
+  - Sections: Executive Summary, Metrics Analysis, News Context, Conclusion
+- **Output**: Complete Portuguese SRAG report
+
+**5. `create_audit` Node**
+- **Purpose**: Creates audit trail for transparency and debugging
+- **Operations**:
+  - Captures all state transitions and messages
+  - Logs SQL queries executed
+  - Saves full execution log to `/logs` directory
+  - Filters messages for user-facing audit trail
+- **Output**: JSON audit trail with execution metadata
+
+#### State Management
+
+The workflow uses a **reducer pattern** for message accumulation:
+```python
+class ReportState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], add]  # Accumulated across nodes
+    days: int
+    state_filter: Optional[str]
+    metrics: Optional[Dict[str, Any]]
+    news_context: Optional[str]
+    chart_data: Optional[Dict[str, Any]]
+    final_report: Optional[str]
+    audit_trail: Optional[Dict[str, Any]]
+```
+
+Each node receives the current state, performs its operations, updates the state, and passes it to the next node via edges defined in the graph.
