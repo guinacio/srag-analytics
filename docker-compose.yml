@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  # PostgreSQL with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: srag_postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-srag_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-srag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-srag_password}
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-srag_user} -d ${POSTGRES_DB:-srag_analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - srag_network
+
+  # FastAPI Backend with LangServe
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: srag_backend
+    environment:
+      # Database
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-srag_analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-srag_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-srag_password}
+
+      # LLM & API Keys
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      TAVILY_API_KEY: ${TAVILY_API_KEY}
+
+      # LangSmith (optional)
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGCHAIN_TRACING_V2: ${LANGCHAIN_TRACING_V2:-false}
+      LANGCHAIN_PROJECT: ${LANGCHAIN_PROJECT:-srag-analytics}
+
+      # App Config
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - srag_network
+    command: uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  srag_network:
+    driver: bridge
