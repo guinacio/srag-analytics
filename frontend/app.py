@@ -109,7 +109,7 @@ def render_metric_card(title: str, value: Any, delta: Any = None, help_text: str
 
 
 def create_daily_chart(data: list, days: int = 30):
-    """Create daily cases line chart."""
+    """Create daily cases line chart with 7-day moving average."""
     if not data:
         st.warning("Nenhum dado disponível para o gráfico diário")
         return
@@ -117,14 +117,37 @@ def create_daily_chart(data: list, days: int = 30):
     dates = [d['date'] for d in data]
     cases = [d['cases'] for d in data]
 
+    # Calculate 7-day moving average
+    moving_avg = []
+    for i in range(len(cases)):
+        if i < 6:
+            # Not enough data for 7-day average, use available data
+            avg = sum(cases[:i+1]) / (i+1)
+        else:
+            # Calculate 7-day average
+            avg = sum(cases[i-6:i+1]) / 7
+        moving_avg.append(avg)
+
     fig = go.Figure()
+
+    # Daily cases (lighter, thinner line)
     fig.add_trace(go.Scatter(
         x=dates,
         y=cases,
         mode='lines+markers',
         name='Casos Diários',
-        line=dict(color='#1f77b4', width=2),
-        marker=dict(size=6),
+        line=dict(color='#1f77b4', width=1),
+        marker=dict(size=4),
+        opacity=0.6,
+    ))
+
+    # 7-day moving average (prominent line)
+    fig.add_trace(go.Scatter(
+        x=dates,
+        y=moving_avg,
+        mode='lines',
+        name='Média Móvel 7 Dias',
+        line=dict(color='#ff7f0e', width=3, dash='dash'),
     ))
 
     fig.update_layout(
@@ -133,6 +156,13 @@ def create_daily_chart(data: list, days: int = 30):
         yaxis_title="Número de Casos",
         hovermode='x unified',
         template='plotly_white',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        )
     )
 
     st.plotly_chart(fig, use_container_width=True)
@@ -236,6 +266,10 @@ def main():
         # Display report if available in session state
         if st.session_state.get("report_generated"):
             report_data = st.session_state.get("report_data", {})
+
+            # Display header with state info
+            if state_filter:
+                st.info(f"📍 Dados filtrados para: **{state_filter}**")
 
             # Display key metrics
             st.subheader("Métricas Principais")

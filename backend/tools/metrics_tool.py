@@ -253,34 +253,72 @@ class MetricsTool:
             }
         }
 
-    def get_daily_cases_chart_data(self, days: int = 30) -> List[Dict[str, Any]]:
+    def get_daily_cases_chart_data(
+        self,
+        days: int = 30,
+        state: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Get daily cases for the last N days (for chart)."""
         with get_db() as db:
-            query = text(f"""
-                SELECT
-                    metric_date::text as date,
-                    new_cases as cases
-                FROM daily_metrics
-                WHERE metric_date >= CURRENT_DATE - INTERVAL '{days} days'
-                  AND metric_date < CURRENT_DATE
-                ORDER BY metric_date
-            """)
+            if state:
+                # Query raw data with state filter
+                query = text(f"""
+                    SELECT
+                        dt_sin_pri::text as date,
+                        COUNT(*) as cases
+                    FROM srag_cases
+                    WHERE dt_sin_pri >= CURRENT_DATE - INTERVAL '{days} days'
+                      AND dt_sin_pri < CURRENT_DATE
+                      AND sg_uf_not = '{state}'
+                    GROUP BY dt_sin_pri
+                    ORDER BY dt_sin_pri
+                """)
+            else:
+                # Use materialized view for faster queries
+                query = text(f"""
+                    SELECT
+                        metric_date::text as date,
+                        new_cases as cases
+                    FROM daily_metrics
+                    WHERE metric_date >= CURRENT_DATE - INTERVAL '{days} days'
+                      AND metric_date < CURRENT_DATE
+                    ORDER BY metric_date
+                """)
 
             result = db.execute(query)
             return [{'date': row.date, 'cases': row.cases} for row in result]
 
-    def get_monthly_cases_chart_data(self, months: int = 12) -> List[Dict[str, Any]]:
+    def get_monthly_cases_chart_data(
+        self,
+        months: int = 12,
+        state: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """Get monthly cases for the last N months (for chart)."""
         with get_db() as db:
-            query = text(f"""
-                SELECT
-                    year,
-                    month,
-                    total_cases
-                FROM monthly_metrics
-                WHERE (year * 12 + month) >= (EXTRACT(YEAR FROM CURRENT_DATE) * 12 + EXTRACT(MONTH FROM CURRENT_DATE) - {months})
-                ORDER BY year, month
-            """)
+            if state:
+                # Query raw data with state filter
+                query = text(f"""
+                    SELECT
+                        EXTRACT(YEAR FROM dt_sin_pri)::int as year,
+                        EXTRACT(MONTH FROM dt_sin_pri)::int as month,
+                        COUNT(*) as total_cases
+                    FROM srag_cases
+                    WHERE dt_sin_pri >= CURRENT_DATE - INTERVAL '{months} months'
+                      AND sg_uf_not = '{state}'
+                    GROUP BY year, month
+                    ORDER BY year, month
+                """)
+            else:
+                # Use materialized view for faster queries
+                query = text(f"""
+                    SELECT
+                        year,
+                        month,
+                        total_cases
+                    FROM monthly_metrics
+                    WHERE (year * 12 + month) >= (EXTRACT(YEAR FROM CURRENT_DATE) * 12 + EXTRACT(MONTH FROM CURRENT_DATE) - {months})
+                    ORDER BY year, month
+                """)
 
             result = db.execute(query)
             return [

@@ -15,8 +15,9 @@ from operator import add
 from backend.config.settings import settings
 from backend.tools.metrics_tool import metrics_tool
 from backend.tools.news_tool import news_tool
-from backend.tools.sql_tool import sql_tool
-from backend.tools.rag_tool import rag_tool
+from backend.tools.sql_tool import sql_tool  # Available for future user-driven data exploration
+from backend.tools.rag_tool import rag_tool   # Available for future schema/documentation queries
+from backend.agents.prompts import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -123,14 +124,15 @@ class SRAGReportAgent:
     def fetch_news_node(self, state: ReportState) -> ReportState:
         """Fetch recent news about SRAG."""
         days = state.get("days", 30)
-        logger.info(f"Node: Fetching news (days={days})")
+        state_filter = state.get("state_filter")
+        logger.info(f"Node: Fetching news (days={days}, state={state_filter})")
 
         try:
             # Get recent SRAG news using the same period as metrics
-            articles = news_tool.search_srag_news(days=days, max_results=10)
+            articles = news_tool.search_srag_news(days=days, max_results=10, state=state_filter)
 
             # Format news context with same period
-            news_context = news_tool.get_recent_context(days=days)
+            news_context = news_tool.get_recent_context(days=days, state=state_filter)
             news_citations = news_tool.format_for_citation(articles)
 
             state["news_context"] = news_context
@@ -152,14 +154,15 @@ class SRAGReportAgent:
     def generate_charts_node(self, state: ReportState) -> ReportState:
         """Generate chart data for daily and monthly trends."""
         days = state.get("days", 30)
-        logger.info(f"Node: Generating charts (days={days})")
+        state_filter = state.get("state_filter")
+        logger.info(f"Node: Generating charts (days={days}, state={state_filter})")
 
         try:
             # Get daily cases for the specified period
-            daily_data = metrics_tool.get_daily_cases_chart_data(days=days)
+            daily_data = metrics_tool.get_daily_cases_chart_data(days=days, state=state_filter)
 
             # Get monthly cases (last 12 months)
-            monthly_data = metrics_tool.get_monthly_cases_chart_data(months=12)
+            monthly_data = metrics_tool.get_monthly_cases_chart_data(months=12, state=state_filter)
 
             state["chart_data"] = {
                 "daily_30d": daily_data,
@@ -187,58 +190,9 @@ class SRAGReportAgent:
             metrics = state.get("metrics", {})
             news_context = state.get("news_context", "")
 
-            # Build prompt for report generation
-            system_prompt = """Você é um analista de saúde pública especializado em SRAG (Síndrome Respiratória Aguda Grave).
-
-Sua tarefa é gerar um relatório conciso e informativo sobre a situação atual de SRAG no Brasil, baseado em:
-1. Métricas calculadas do banco de dados DATASUS
-2. Notícias recentes sobre SRAG
-
-O relatório deve:
-- Explicar cada métrica de forma clara
-- Contextualizar os números com as notícias recentes
-- Identificar tendências e padrões
-- Ser objetivo e baseado em dados
-- Ter no máximo 500 palavras
-
-Formato do relatório:
-# Relatório SRAG - [Data]
-
-## Resumo Executivo
-[Principais achados em 2-3 frases]
-
-## Métricas Principais
-
-### 1. Taxa de Aumento de Casos
-[Explicação da métrica e interpretação]
-
-### 2. Taxa de Mortalidade
-[Explicação da métrica e interpretação]
-
-### 3. Taxa de Ocupação de UTI
-[Explicação da métrica e interpretação]
-
-### 4. Taxa de Vacinação
-[Explicação da métrica e interpretação]
-
-## Contexto de Notícias Recentes
-[Como as notícias relacionam-se com as métricas]
-
-## Conclusão
-[Síntese e implicações]
-"""
-
-            user_prompt = f"""Gere o relatório baseado nestes dados:
-
-MÉTRICAS:
-```json
-{json.dumps(metrics, indent=2, ensure_ascii=False)}
-```
-
-NOTÍCIAS RECENTES:
-{news_context}
-
-Gere o relatório seguindo o formato especificado."""
+            # Build prompts from centralized prompt management
+            system_prompt = prompts.REPORT_SYSTEM_PROMPT
+            user_prompt = prompts.build_report_user_prompt(metrics, news_context)
 
             # Generate report with LLM
             messages = [

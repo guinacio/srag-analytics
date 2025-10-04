@@ -1,4 +1,37 @@
-"""SQL Agent tool with safety guardrails."""
+"""
+SQL Agent tool with safety guardrails.
+
+⚠️ IMPORTANT: This tool is currently NOT used in production for security reasons.
+
+The report agent uses pre-defined SQL queries in metrics_tool.py instead of
+LLM-generated SQL to ensure:
+- Predictable, tested queries
+- No SQL injection risks from LLM hallucinations
+- Consistent performance
+- Easier debugging and auditing
+
+FUTURE USE CASE:
+This tool is designed and available for implementing user-driven data exploration
+features where users can ask natural language questions about SRAG data, such as:
+- "Show me age distribution of SRAG cases in São Paulo"
+- "What's the trend of ICU admissions over the last 3 months?"
+- "Compare vaccination rates across different states"
+
+When implementing such features:
+1. Use this tool through a dedicated /query endpoint (separate from /report)
+2. Require explicit user opt-in for custom queries
+3. Display the generated SQL to users for transparency
+4. Log all queries for audit purposes
+5. Consider rate limiting to prevent abuse
+
+The tool includes multiple safety layers:
+- Read-only database connection (readonly_user)
+- Table allowlist (only SRAG-related tables)
+- Query validation (SELECT-only, no DDL/DML)
+- Automatic row limits (10,000 max)
+- Query timeout (30 seconds)
+- Transaction read-only enforcement
+"""
 import logging
 from typing import List, Dict, Any
 from sqlalchemy import create_engine, text
@@ -13,12 +46,18 @@ logger = logging.getLogger(__name__)
 
 class SafeSQLTool:
     """
-    Safe SQL query tool with guardrails:
+    Safe SQL query tool with comprehensive guardrails.
+
+    Security Features:
     - Read-only database connection
-    - Table allowlist
-    - Query timeout
-    - Row limit enforcement
-    - SQL syntax validation
+    - Table allowlist (srag_cases, data_dictionary, daily_metrics, monthly_metrics)
+    - Query timeout (30 seconds)
+    - Row limit enforcement (10,000 max)
+    - SQL syntax validation (SELECT-only)
+    - No DDL/DML operations allowed
+
+    Status: Available but not currently used in production.
+    See module docstring for intended use cases.
     """
 
     ALLOWED_TABLES = [
@@ -49,9 +88,10 @@ class SafeSQLTool:
             sample_rows_in_table_info=3,
         )
 
-        # Initialize LLM for SQL agent
+        # Initialize LLM for SQL agent (when/if implemented)
+        # NOTE: Use gpt-4o-mini for cost-effective SQL generation
         self.llm = ChatOpenAI(
-            model="gpt-5-mini",
+            model="gpt-4o-mini",
             temperature=0,
             openai_api_key=settings.openai_api_key,
         )

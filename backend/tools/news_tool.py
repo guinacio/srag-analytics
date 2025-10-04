@@ -7,6 +7,7 @@ from openai import OpenAI
 from tavily import TavilyClient
 
 from backend.config.settings import settings
+from backend.agents.prompts import prompts
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,7 @@ class NewsTool:
         query: Optional[str] = None,
         days: int = 7,
         max_results: int = 10,
+        state: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Search for SRAG-related news.
@@ -40,13 +42,26 @@ class NewsTool:
             query: Custom search query (defaults to SRAG news)
             days: Number of days to look back
             max_results: Maximum number of results
+            state: Optional state filter (UF code)
 
         Returns:
             List of news articles with title, url, content, published_date
         """
+        # State name mapping for better news search
+        state_names = {
+            "SP": "São Paulo", "RJ": "Rio de Janeiro", "MG": "Minas Gerais",
+            "BA": "Bahia", "PR": "Paraná", "RS": "Rio Grande do Sul",
+            "SC": "Santa Catarina", "GO": "Goiás", "DF": "Distrito Federal"
+        }
+
         if query is None:
             # Query in Portuguese to prioritize Portuguese-language results
-            query = "SRAG síndrome respiratória aguda grave COVID-19 Brasil notícias saúde"
+            base_query = "SRAG síndrome respiratória aguda grave COVID-19 Brasil notícias saúde"
+            # Add state name to query if provided
+            if state and state in state_names:
+                query = f"{base_query} {state_names[state]}"
+            else:
+                query = base_query
 
         safe_days = max(1, days or 1)
         start_date, end_date = self._compute_date_window(safe_days)
@@ -171,16 +186,17 @@ class NewsTool:
             max_results=max_results,
         )
 
-    def get_recent_context(self, days: int = 30) -> str:
+    def get_recent_context(self, days: int = 30, state: Optional[str] = None) -> str:
         """
         Get formatted recent news context for report generation.
 
         Args:
             days: Number of days to look back (default: 30)
+            state: Optional state filter (UF code)
 
         Returns a text summary of recent SRAG news.
         """
-        articles = self.search_srag_news(days=days, max_results=10)
+        articles = self.search_srag_news(days=days, max_results=10, state=state)
 
         if not articles:
             return "Nenhuma noticia recente encontrada sobre SRAG."
@@ -339,24 +355,15 @@ class NewsTool:
             # Limit content size to avoid token limits
             truncated_content = content[:1000] if len(content) > 1000 else content
 
-            prompt = f"""Extraia a data de publicação deste artigo de notícia em português.
-Procure por padrões como "quinta-feira (28)", "divulgado nesta quinta", "publicado em", datas no formato DD/MM/AAAA, etc.
-Retorne APENAS a data no formato YYYY-MM-DD, sem texto adicional.
-Se não encontrar uma data específica, retorne apenas "NONE".
-
-IMPORTANTE: Hoje é {datetime.now(timezone.utc).strftime('%Y-%m-%d')}. Use isso para interpretar datas relativas.
-
-Título: {title}
-
-Conteúdo: {truncated_content}
-
-Data de publicação (YYYY-MM-DD):"""
+            # Build prompts from centralized prompt management
+            system_prompt = prompts.DATE_EXTRACTION_SYSTEM_PROMPT
+            user_prompt = prompts.build_date_extraction_prompt(title, truncated_content)
 
             response = self.openai_client.chat.completions.create(
                 model="gpt-4o-mini",  # Fast and cheap model
                 messages=[
-                    {"role": "system", "content": "Você é um assistente que extrai datas de artigos de notícias. Retorne apenas datas no formato YYYY-MM-DD ou NONE."},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
                 ],
                 temperature=0,
                 max_tokens=20,

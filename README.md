@@ -147,3 +147,8 @@ class ReportState(TypedDict):
 ```
 
 Each node receives the current state, performs its operations, updates the state, and passes it to the next node via edges defined in the graph.
+
+
+#### Future Capabilities
+
+The system includes `sql_tool.py` - a safe SQL query tool designed for future user-driven data exploration features. Currently **not used in production** for security and reliability. See [SQL Tool Implementation Guide](docs/SQL_TOOL_IMPLEMENTATION_GUIDE.md) for details on enabling natural language database queries.
