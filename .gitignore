@@ -66,6 +66,9 @@ htmlcov/
 *.bak
 .temp/
 
+# Test files
+tests/
+
 # Misc Files
 .claude/
 data_quality_report.json

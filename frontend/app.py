@@ -70,7 +70,7 @@ def render_metric_card(title: str, value: Any, delta: Any = None, help_text: str
         st.metric(label=title, value=value, delta=delta, help=help_text)
 
 
-def create_daily_chart(data: list):
+def create_daily_chart(data: list, days: int = 30):
     """Create daily cases line chart."""
     if not data:
         st.warning("Nenhum dado disponível para o gráfico diário")
@@ -90,7 +90,7 @@ def create_daily_chart(data: list):
     ))
 
     fig.update_layout(
-        title="Casos Diários de SRAG (Últimos 30 Dias)",
+        title=f"Casos Diários de SRAG (Últimos {days} Dias)",
         xaxis_title="Data",
         yaxis_title="Número de Casos",
         hovermode='x unified',
@@ -241,7 +241,7 @@ def main():
 
                     with col1:
                         chart_data = report_data.get("chart_data", {})
-                        create_daily_chart(chart_data.get("daily_30d", []))
+                        create_daily_chart(chart_data.get("daily_30d", []), days=days)
 
                     with col2:
                         create_monthly_chart(chart_data.get("monthly_12m", []))

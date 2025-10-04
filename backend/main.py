@@ -88,7 +88,7 @@ class NewsRequest(BaseModel):
     """Request model for news search."""
     query: Optional[str] = None
     days: int = 7
-    max_results: int = 5
+    max_results: int = 10
 
 
 class ExplainFieldRequest(BaseModel):

@@ -1,7 +1,8 @@
 """News retrieval tool using Tavily Search."""
 import logging
-from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
+
 from tavily import TavilyClient
 
 from backend.config.settings import settings
@@ -28,7 +29,7 @@ class NewsTool:
         self,
         query: Optional[str] = None,
         days: int = 7,
-        max_results: int = 5,
+        max_results: int = 10,
         location: Optional[str] = "br",
     ) -> List[Dict[str, Any]]:
         """
@@ -44,9 +45,17 @@ class NewsTool:
             List of news articles with title, url, content, published_date
         """
         if query is None:
-            query = "SRAG síndrome respiratória aguda grave COVID-19 Brasil"
+            query = "SRAG sindrome respiratoria aguda grave COVID-19 Brasil"
 
-        logger.info(f"Searching news: {query} (last {days} days)")
+        safe_days = max(1, days or 1)
+        start_date, end_date = self._compute_date_window(safe_days)
+
+        logger.info(
+            "Searching news: %s (window %s to %s)",
+            query,
+            start_date,
+            end_date,
+        )
 
         # Priority Brazilian news domains
         brazilian_domains = [
@@ -59,44 +68,61 @@ class NewsTool:
             "saude.gov.br",
             "fiocruz.br",
             "butantan.gov.br",
+            "msn.com.br",
+            "terra.com.br"
         ]
 
         try:
-            results = self.client.search(
+            search_params: Dict[str, Any] = dict(
                 query=query,
                 search_depth="advanced",  # More comprehensive results
                 topic="news",  # Focus on news articles
-                days=days,  # Recent news only
                 max_results=max_results,
                 include_domains=brazilian_domains,  # Priority for Brazilian sources
                 exclude_domains=[],
+                days=safe_days,  # Use days parameter instead of explicit dates
             )
 
-            articles = []
-            for result in results.get("results", []):
-                articles.append({
-                    "title": result.get("title", ""),
-                    "url": result.get("url", ""),
-                    "content": result.get("content", ""),
-                    "published_date": result.get("published_date", ""),
-                    "score": result.get("score", 0.0),
-                })
+            # Map country codes to full names for Tavily API
+            if location:
+                country_map = {
+                    "br": "brazil",
+                    "brasil": "brazil",
+                    "brazil": "brazil",
+                }
+                full_country = country_map.get(location.lower(), location.lower())
+                search_params["country"] = full_country
 
-            logger.info(f"Found {len(articles)} news articles")
+            results = self.client.search(**search_params)
+
+            articles: List[Dict[str, Any]] = []
+            for result in results.get("results", []):
+                published_date = self._extract_published_date(result)
+                articles.append(
+                    {
+                        "title": result.get("title", ""),
+                        "url": result.get("url", ""),
+                        "content": result.get("content", ""),
+                        "published_date": published_date,
+                        "score": result.get("score", 0.0),
+                    }
+                )
+
+            logger.info("Found %s news articles", len(articles))
             return articles
 
-        except Exception as e:
-            logger.error(f"News search error: {e}")
+        except Exception as exc:  # pragma: no cover - defensive log
+            logger.error("News search error: %s", exc)
             return []
 
     def search_by_state(
         self,
         state: str,
         days: int = 7,
-        max_results: int = 3,
+        max_results: int = 5,
     ) -> List[Dict[str, Any]]:
         """Search for SRAG news specific to a Brazilian state."""
-        query = f"SRAG COVID-19 síndrome respiratória {state} Brasil"
+        query = f"SRAG COVID-19 sindrome respiratoria {state} Brasil"
         return self.search_srag_news(
             query=query,
             days=days,
@@ -109,17 +135,17 @@ class NewsTool:
 
         Returns a text summary of recent SRAG news.
         """
-        articles = self.search_srag_news(days=7, max_results=5)
+        articles = self.search_srag_news(days=7, max_results=10)
 
         if not articles:
-            return "Nenhuma notícia recente encontrada sobre SRAG."
+            return "Nenhuma noticia recente encontrada sobre SRAG."
 
-        context = "## Notícias Recentes sobre SRAG\n\n"
+        context = "## Noticias Recentes sobre SRAG\n\n"
 
         for i, article in enumerate(articles, 1):
             context += f"### {i}. {article['title']}\n"
             context += f"**Fonte:** {article['url']}\n"
-            if article['published_date']:
+            if article["published_date"]:
                 context += f"**Data:** {article['published_date']}\n"
             context += f"**Resumo:** {article['content'][:300]}...\n\n"
 
@@ -127,16 +153,110 @@ class NewsTool:
 
     def format_for_citation(self, articles: List[Dict[str, Any]]) -> List[Dict[str, str]]:
         """Format news articles for citation in reports."""
-        citations = []
+        citations: List[Dict[str, str]] = []
 
         for article in articles:
-            citations.append({
-                "title": article["title"],
-                "url": article["url"],
-                "date": article.get("published_date", "Data não disponível"),
-            })
+            citations.append(
+                {
+                    "title": article["title"],
+                    "url": article["url"],
+                    "date": article.get("published_date", "Data nao disponivel"),
+                }
+            )
 
         return citations
+
+    @staticmethod
+    def _compute_date_window(days: int) -> Tuple[str, str]:
+        """Return ISO date strings (YYYY-MM-DD) representing the search window."""
+        end = datetime.now(timezone.utc)
+        start = end - timedelta(days=days - 1)
+        return start.date().isoformat(), end.date().isoformat()
+
+    def _extract_published_date(self, result: Dict[str, Any]) -> str:
+        """Try to normalize a published date from Tavily's response."""
+        candidate_keys = [
+            "published_date",
+            "published_at",
+            "date",
+            "date_published",
+            "news_date",
+            "timestamp",
+        ]
+
+        for key in candidate_keys:
+            normalized = self._normalize_date(result.get(key))
+            if normalized:
+                return normalized
+
+        metadata = result.get("metadata")
+        if isinstance(metadata, dict):
+            for key in candidate_keys + ["published_time", "modified_date", "created_at"]:
+                normalized = self._normalize_date(metadata.get(key))
+                if normalized:
+                    return normalized
+
+        return ""
+
+    @staticmethod
+    def _normalize_date(value: Any) -> str:
+        """Convert different date formats into an ISO date string."""
+        if value is None or value == "":
+            return ""
+
+        if isinstance(value, datetime):
+            ts = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+            return ts.astimezone(timezone.utc).date().isoformat()
+
+        if isinstance(value, (int, float)):
+            timestamp = float(value)
+            if timestamp > 1e12:  # likely milliseconds
+                timestamp /= 1000.0
+            try:
+                dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return ""
+            return dt.date().isoformat()
+
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return ""
+
+            # Try RFC 2822 format first (e.g., "Tue, 30 Sep 2025 05:10:32 GMT")
+            try:
+                from email.utils import parsedate_to_datetime
+                dt = parsedate_to_datetime(raw)
+                return dt.astimezone(timezone.utc).date().isoformat()
+            except (ValueError, TypeError):
+                pass
+
+            # Try ISO format and common patterns
+            iso_candidate = raw.replace("Z", "+00:00")
+            parse_fmts = [None, "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d/%m/%Y"]
+
+            for fmt in parse_fmts:
+                try:
+                    if fmt is None:
+                        dt = datetime.fromisoformat(iso_candidate)
+                    else:
+                        dt = datetime.strptime(raw, fmt)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt.astimezone(timezone.utc).date().isoformat()
+                except ValueError:
+                    continue
+
+            # Last resort: try to extract YYYY-MM-DD from beginning
+            if len(raw) >= 10:
+                potential = raw[:10]
+                try:
+                    dt = datetime.strptime(potential, "%Y-%m-%d")
+                    return dt.date().isoformat()
+                except ValueError:
+                    pass
+
+        return ""
 
 
 # Global instance

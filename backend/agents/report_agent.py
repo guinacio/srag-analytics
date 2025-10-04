@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 class ReportState(TypedDict):
     """State passed between agent nodes."""
     messages: Annotated[Sequence[BaseMessage], add]
+    days: int  # Number of days to analyze
+    state_filter: Optional[str]  # State filter (UF)
     metrics: Optional[Dict[str, Any]]
     news_context: Optional[str]
     news_citations: Optional[list]
@@ -81,22 +83,17 @@ class SRAGReportAgent:
 
     def calculate_metrics_node(self, state: ReportState) -> ReportState:
         """Calculate all 4 required SRAG metrics."""
-        logger.info("Node: Calculating metrics")
+        days = state.get("days", 30)
+        state_filter = state.get("state_filter")
+        logger.info(f"Node: Calculating metrics (days={days}, state={state_filter})")
 
         try:
-            # Extract parameters from messages if provided
-            last_message = state["messages"][-1].content if state["messages"] else ""
-
-            # Default: last 30 days
-            days = 30
-            state_filter = None
-
-            # Calculate all metrics
+            # Calculate all metrics using state parameters
             metrics = metrics_tool.calculate_all_metrics(days=days, state=state_filter)
 
             state["metrics"] = metrics
             state["messages"].append(
-                AIMessage(content=f"Calculated all 4 SRAG metrics for last {days} days")
+                AIMessage(content=f"Calculated all 4 SRAG metrics for last {days} days{f' in state {state_filter}' if state_filter else ''}")
             )
 
             # Log SQL query for audit
@@ -106,6 +103,8 @@ class SRAGReportAgent:
             state["sql_queries"].append({
                 "operation": "calculate_metrics",
                 "timestamp": datetime.utcnow().isoformat(),
+                "days": days,
+                "state_filter": state_filter,
                 "metrics": list(metrics.keys()),
             })
 
@@ -120,11 +119,12 @@ class SRAGReportAgent:
 
     def fetch_news_node(self, state: ReportState) -> ReportState:
         """Fetch recent news about SRAG."""
-        logger.info("Node: Fetching news")
+        days = state.get("days", 30)
+        logger.info(f"Node: Fetching news (days={days})")
 
         try:
-            # Get recent SRAG news
-            articles = news_tool.search_srag_news(days=7, max_results=5)
+            # Get recent SRAG news using the same period as metrics
+            articles = news_tool.search_srag_news(days=days, max_results=10)
 
             # Format news context
             news_context = news_tool.get_recent_context()
@@ -133,7 +133,7 @@ class SRAGReportAgent:
             state["news_context"] = news_context
             state["news_citations"] = news_citations
             state["messages"].append(
-                AIMessage(content=f"Fetched {len(articles)} recent news articles about SRAG")
+                AIMessage(content=f"Fetched {len(articles)} recent news articles about SRAG from last {days} days")
             )
 
         except Exception as e:
@@ -147,12 +147,13 @@ class SRAGReportAgent:
         return state
 
     def generate_charts_node(self, state: ReportState) -> ReportState:
-        """Generate chart data for 30-day and 12-month trends."""
-        logger.info("Node: Generating charts")
+        """Generate chart data for daily and monthly trends."""
+        days = state.get("days", 30)
+        logger.info(f"Node: Generating charts (days={days})")
 
         try:
-            # Get daily cases (last 30 days)
-            daily_data = metrics_tool.get_daily_cases_chart_data(days=30)
+            # Get daily cases for the specified period
+            daily_data = metrics_tool.get_daily_cases_chart_data(days=days)
 
             # Get monthly cases (last 12 months)
             monthly_data = metrics_tool.get_monthly_cases_chart_data(months=12)
@@ -309,11 +310,13 @@ Gere o relatório seguindo o formato especificado."""
         """
         logger.info(f"Generating SRAG report (days={days}, state={state_filter})")
 
-        # Initialize state
+        # Initialize state with parameters
         initial_state = {
             "messages": [
                 HumanMessage(content=user_request or f"Generate SRAG report for last {days} days")
             ],
+            "days": days,
+            "state_filter": state_filter,
             "metrics": None,
             "news_context": None,
             "news_citations": None,
