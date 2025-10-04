@@ -3,6 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from openai import OpenAI
 from tavily import TavilyClient
 
 from backend.config.settings import settings
@@ -22,15 +23,15 @@ class NewsTool:
     """
 
     def __init__(self):
-        """Initialize Tavily client."""
+        """Initialize Tavily and OpenAI clients."""
         self.client = TavilyClient(api_key=settings.tavily_api_key)
+        self.openai_client = OpenAI(api_key=settings.openai_api_key)
 
     def search_srag_news(
         self,
         query: Optional[str] = None,
         days: int = 7,
         max_results: int = 10,
-        location: Optional[str] = "br",
     ) -> List[Dict[str, Any]]:
         """
         Search for SRAG-related news.
@@ -39,7 +40,6 @@ class NewsTool:
             query: Custom search query (defaults to SRAG news)
             days: Number of days to look back
             max_results: Maximum number of results
-            location: Geographic location filter (default: Brazil)
 
         Returns:
             List of news articles with title, url, content, published_date
@@ -66,18 +66,12 @@ class NewsTool:
             "estadao.com.br",
             "uol.com.br",
             "cnnbrasil.com.br",
-            "saude.gov.br",
-            "fiocruz.br",
             "agencia.fiocruz.br",
             "butantan.gov.br",
             "msn.com.br",
             "terra.com.br",
             "noticias.uol.com.br",
-            "saude.abril.com.br",
-            "bvsms.saude.gov.br",
-            "opendatasus.saude.gov.br",
-            "www.gov.br/saude",
-            "portal.fiocruz.br"
+            "saude.abril.com.br"
         ]
         
         # Explicitly exclude English-language domains and English sections
@@ -94,25 +88,15 @@ class NewsTool:
         ]
 
         try:
-            search_params: Dict[str, Any] = dict(
-                query=query,
-                search_depth="advanced",  # More comprehensive results
-                topic="news",  # Focus on news articles
-                max_results=max_results,
-                include_domains=brazilian_domains,  # Priority Brazilian sources
-                exclude_domains=english_domains,  # Exclude English sites
-                days=safe_days,
-            )
-
-            # Map country codes to full names for Tavily API
-            if location:
-                country_map = {
-                    "br": "brazil",
-                    "brasil": "brazil",
-                    "brazil": "brazil",
-                }
-                full_country = country_map.get(location.lower(), location.lower())
-                search_params["country"] = full_country
+            search_params: Dict[str, Any] = {
+                "query": query,
+                "search_depth": "advanced",
+                "topic": "news",
+                "max_results": max_results,
+                "include_domains": brazilian_domains,
+                "exclude_domains": english_domains,
+                "days": safe_days,
+            }
 
             results = self.client.search(**search_params)
 
@@ -142,9 +126,19 @@ class NewsTool:
                 # Extract date (may be empty for some sources)
                 published_date = self._extract_published_date(result)
                 if not published_date:
-                    # Fallback: mark as "Recente" (recent)
-                    published_date = "Recente"
-                
+                    # Fallback: try to extract from content using LLM
+                    published_date = self._extract_date_with_llm(title, content)
+
+                # Skip articles without dates - we can't verify their recency
+                if not published_date:
+                    logger.debug(f"Skipping article without date: {title[:50]}")
+                    continue
+
+                # Validate date is within the requested time window
+                if not self._is_date_within_range(published_date, safe_days):
+                    logger.debug(f"Skipping old article from {published_date}: {title[:50]}")
+                    continue
+
                 articles.append(
                     {
                         "title": title,
@@ -177,13 +171,16 @@ class NewsTool:
             max_results=max_results,
         )
 
-    def get_recent_context(self) -> str:
+    def get_recent_context(self, days: int = 30) -> str:
         """
         Get formatted recent news context for report generation.
 
+        Args:
+            days: Number of days to look back (default: 30)
+
         Returns a text summary of recent SRAG news.
         """
-        articles = self.search_srag_news(days=7, max_results=10)
+        articles = self.search_srag_news(days=days, max_results=10)
 
         if not articles:
             return "Nenhuma noticia recente encontrada sobre SRAG."
@@ -209,6 +206,7 @@ class NewsTool:
                     "title": article["title"],
                     "url": article["url"],
                     "date": article.get("published_date", "Data nao disponivel"),
+                    "content": article.get("content", ""),
                 }
             )
 
@@ -305,6 +303,82 @@ class NewsTool:
                     pass
 
         return ""
+
+    @staticmethod
+    def _is_date_within_range(date_str: str, days: int) -> bool:
+        """
+        Check if a date string is within the specified number of days from today.
+
+        Args:
+            date_str: ISO date string (YYYY-MM-DD)
+            days: Number of days back from today
+
+        Returns:
+            True if date is within range, False otherwise
+        """
+        try:
+            article_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
+            return article_date >= cutoff_date
+        except (ValueError, TypeError):
+            # If we can't parse the date, assume it's not valid
+            return False
+
+    def _extract_date_with_llm(self, title: str, content: str) -> str:
+        """
+        Use OpenAI to extract publication date from article content.
+
+        Args:
+            title: Article title
+            content: Article content
+
+        Returns:
+            ISO date string (YYYY-MM-DD) or empty string if not found
+        """
+        try:
+            # Limit content size to avoid token limits
+            truncated_content = content[:1000] if len(content) > 1000 else content
+
+            prompt = f"""Extraia a data de publicação deste artigo de notícia em português.
+Procure por padrões como "quinta-feira (28)", "divulgado nesta quinta", "publicado em", datas no formato DD/MM/AAAA, etc.
+Retorne APENAS a data no formato YYYY-MM-DD, sem texto adicional.
+Se não encontrar uma data específica, retorne apenas "NONE".
+
+IMPORTANTE: Hoje é {datetime.now(timezone.utc).strftime('%Y-%m-%d')}. Use isso para interpretar datas relativas.
+
+Título: {title}
+
+Conteúdo: {truncated_content}
+
+Data de publicação (YYYY-MM-DD):"""
+
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4o-mini",  # Fast and cheap model
+                messages=[
+                    {"role": "system", "content": "Você é um assistente que extrai datas de artigos de notícias. Retorne apenas datas no formato YYYY-MM-DD ou NONE."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0,
+                max_tokens=20,
+            )
+
+            extracted_date = response.choices[0].message.content.strip()
+
+            # Validate format
+            if extracted_date and extracted_date != "NONE":
+                try:
+                    datetime.strptime(extracted_date, "%Y-%m-%d")
+                    logger.debug(f"LLM extracted date: {extracted_date}")
+                    return extracted_date
+                except ValueError:
+                    logger.debug(f"Invalid date format from LLM: {extracted_date}")
+                    return ""
+
+            return ""
+
+        except Exception as exc:
+            logger.warning(f"LLM date extraction failed: {exc}")
+            return ""
 
 
 # Global instance

@@ -34,10 +34,48 @@ st.markdown("""
         margin-bottom: 1rem;
     }
     .news-card {
-        padding: 1rem;
-        border-left: 3px solid #1f77b4;
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        border: 1px solid #e0e0e0;
         margin-bottom: 1rem;
         background-color: #ffffff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        transition: transform 0.2s, box-shadow 0.2s;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+    }
+    .news-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+    }
+    .news-title {
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #1f77b4;
+        margin-bottom: 0.5rem;
+        line-height: 1.4;
+    }
+    .news-date {
+        font-size: 0.85rem;
+        color: #666;
+        margin-bottom: 0.75rem;
+    }
+    .news-content {
+        font-size: 0.9rem;
+        color: #444;
+        line-height: 1.5;
+        margin-bottom: 1rem;
+        flex-grow: 1;
+    }
+    .news-link {
+        color: #1f77b4;
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    .news-link:hover {
+        text-decoration: underline;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -146,6 +184,12 @@ def main():
         selected_state = st.selectbox("Estado (UF)", state_options)
         state_filter = None if selected_state == "Todos os Estados" else selected_state
 
+        # Clear cached report if parameters changed
+        if st.session_state.get("last_days") != days or st.session_state.get("last_state") != state_filter:
+            st.session_state["report_generated"] = False
+            st.session_state["last_days"] = days
+            st.session_state["last_state"] = state_filter
+
         st.divider()
 
         # Actions
@@ -178,7 +222,7 @@ def main():
     with tab1:
         st.header("Painel Geral")
 
-        if generate_report or st.session_state.get("report_generated"):
+        if generate_report:
             with st.spinner("Gerando relatório completo..."):
                 report_data = api_request(
                     "/report",
@@ -190,95 +234,120 @@ def main():
                     st.session_state["report_data"] = report_data
                     st.session_state["report_generated"] = True
 
-                    # Display key metrics
-                    st.subheader("Métricas Principais")
-                    metrics = report_data.get("metrics", {})
+        # Display report if available in session state
+        if st.session_state.get("report_generated"):
+            report_data = st.session_state.get("report_data", {})
 
-                    col1, col2, col3, col4 = st.columns(4)
+            # Display key metrics
+            st.subheader("Métricas Principais")
+            metrics = report_data.get("metrics", {})
 
-                    with col1:
-                        case_increase = metrics.get("case_increase", {})
-                        rate = case_increase.get("increase_rate", 0)
-                        period = case_increase.get("period_days", 30)
-                        st.metric(
-                            "Taxa de Aumento de Casos",
-                            f"{rate:+.1f}%",
-                            help=f"Comparação dos últimos {period} dias com o período anterior de {period} dias"
-                        )
+            col1, col2, col3, col4 = st.columns(4)
 
-                    with col2:
-                        mortality = metrics.get("mortality", {})
-                        mort_rate = mortality.get("mortality_rate", 0)
-                        st.metric(
-                            "Taxa de Mortalidade",
-                            f"{mort_rate:.1f}%",
-                            help="Óbitos / Total de Casos"
-                        )
+            with col1:
+                case_increase = metrics.get("case_increase", {})
+                rate = case_increase.get("increase_rate", 0)
+                period = case_increase.get("period_days", 30)
+                st.metric(
+                    "Taxa de Aumento de Casos",
+                    f"{rate:+.1f}%",
+                    help=f"Comparação dos últimos {period} dias com o período anterior de {period} dias"
+                )
 
-                    with col3:
-                        icu = metrics.get("icu_occupancy", {})
-                        icu_rate = icu.get("icu_occupancy_rate", 0)
-                        st.metric(
-                            "Taxa de Ocupação de UTI",
-                            f"{icu_rate:.1f}%",
-                            help="Admissões em UTI / Hospitalizações"
-                        )
+            with col2:
+                mortality = metrics.get("mortality", {})
+                mort_rate = mortality.get("mortality_rate", 0)
+                st.metric(
+                    "Taxa de Mortalidade",
+                    f"{mort_rate:.1f}%",
+                    help="Óbitos / Total de Casos"
+                )
 
-                    with col4:
-                        vaccination = metrics.get("vaccination", {})
-                        vac_rate = vaccination.get("vaccination_rate", 0)
-                        st.metric(
-                            "Taxa de Vacinação",
-                            f"{vac_rate:.1f}%",
-                            help="Casos vacinados / Total de casos"
-                        )
+            with col3:
+                icu = metrics.get("icu_occupancy", {})
+                icu_rate = icu.get("icu_occupancy_rate", 0)
+                st.metric(
+                    "Taxa de Ocupação de UTI",
+                    f"{icu_rate:.1f}%",
+                    help="Admissões em UTI / Hospitalizações"
+                )
 
-                    st.divider()
+            with col4:
+                vaccination = metrics.get("vaccination", {})
+                vac_rate = vaccination.get("vaccination_rate", 0)
+                st.metric(
+                    "Taxa de Vacinação",
+                    f"{vac_rate:.1f}%",
+                    help="Casos vacinados / Total de casos"
+                )
 
-                    # Charts
-                    st.subheader("Análise de Tendências")
-                    col1, col2 = st.columns(2)
+            st.divider()
 
-                    with col1:
-                        chart_data = report_data.get("chart_data", {})
-                        create_daily_chart(chart_data.get("daily_30d", []), days=days)
+            # Charts
+            st.subheader("Análise de Tendências")
+            col1, col2 = st.columns(2)
 
-                    with col2:
-                        create_monthly_chart(chart_data.get("monthly_12m", []))
+            with col1:
+                chart_data = report_data.get("chart_data", {})
+                create_daily_chart(chart_data.get("daily_30d", []), days=days)
 
-                    st.divider()
+            with col2:
+                create_monthly_chart(chart_data.get("monthly_12m", []))
 
-                    # News context
-                    st.subheader("Contexto de Notícias Recentes")
-                    news_citations = report_data.get("news_citations", [])
+            st.divider()
 
-                    if news_citations:
-                        for citation in news_citations[:5]:
-                            st.markdown(f"""
-                            <div class="news-card">
-                                <b>{citation['title']}</b><br>
-                                <small>{citation.get('date', 'N/A')}</small><br>
-                                <a href="{citation['url']}" target="_blank">Leia mais</a>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        st.info("Nenhuma notícia recente encontrada")
+            # News context
+            st.subheader("Contexto de Notícias Recentes")
+            news_citations = report_data.get("news_citations", [])
 
-                    # Audit trail download
-                    st.divider()
-                    st.subheader("Trilha de Auditoria")
-                    audit_trail = report_data.get("audit_trail", {})
+            if news_citations:
+                # Display news in 3 columns
+                for i in range(0, len(news_citations), 3):
+                    cols = st.columns(3)
+                    for j, col in enumerate(cols):
+                        if i + j < len(news_citations):
+                            citation = news_citations[i + j]
+                            # Get content preview (first 150 chars from content if available)
+                            # Clean markdown symbols and extra whitespace
+                            content_preview = ""
+                            if 'content' in citation and citation['content']:
+                                import re
+                                # Remove markdown headers (##, ###, etc)
+                                clean_content = re.sub(r'#+\s*', '', citation['content'])
+                                # Remove markdown bold/italic
+                                clean_content = re.sub(r'\*\*?(.*?)\*\*?', r'\1', clean_content)
+                                # Remove extra newlines and spaces
+                                clean_content = ' '.join(clean_content.split())
+                                # Get preview
+                                content_preview = clean_content[:150] + "..." if len(clean_content) > 150 else clean_content
 
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.info("Baixe a trilha de auditoria completa para transparência e governança")
-                    with col2:
-                        st.download_button(
-                            label="Baixar JSON",
-                            data=json.dumps(audit_trail, indent=2, ensure_ascii=False),
-                            file_name=f"srag_audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
-                            mime="application/json",
-                        )
+                            with col:
+                                st.markdown(f"""
+                                <div class="news-card">
+                                    <div class="news-title">{citation['title']}</div>
+                                    <div class="news-date">📅 {citation.get('date', 'Data não disponível')}</div>
+                                    <div class="news-content">{content_preview}</div>
+                                    <a href="{citation['url']}" target="_blank" class="news-link">Leia mais →</a>
+                                </div>
+                                """, unsafe_allow_html=True)
+            else:
+                st.info("Nenhuma notícia recente encontrada")
+
+            # Audit trail download
+            st.divider()
+            st.subheader("Trilha de Auditoria")
+            audit_trail = report_data.get("audit_trail", {})
+
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.info("Baixe a trilha de auditoria completa para transparência e governança")
+            with col2:
+                st.download_button(
+                    label="Baixar JSON",
+                    data=json.dumps(audit_trail, indent=2, ensure_ascii=False),
+                    file_name=f"srag_audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                    mime="application/json",
+                )
 
         else:
             st.info("Clique em 'Gerar Relatório' na barra lateral para iniciar a análise")

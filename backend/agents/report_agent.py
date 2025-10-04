@@ -3,6 +3,8 @@ import logging
 from typing import TypedDict, Annotated, Sequence, Dict, Any, Optional
 from datetime import datetime
 import json
+from pathlib import Path
+import time
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres import PostgresSaver
@@ -86,6 +88,7 @@ class SRAGReportAgent:
         days = state.get("days", 30)
         state_filter = state.get("state_filter")
         logger.info(f"Node: Calculating metrics (days={days}, state={state_filter})")
+        logger.info(f"DEBUG: Current messages count: {len(state.get('messages', []))}")
 
         try:
             # Calculate all metrics using state parameters
@@ -126,8 +129,8 @@ class SRAGReportAgent:
             # Get recent SRAG news using the same period as metrics
             articles = news_tool.search_srag_news(days=days, max_results=10)
 
-            # Format news context
-            news_context = news_tool.get_recent_context()
+            # Format news context with same period
+            news_context = news_tool.get_recent_context(days=days)
             news_citations = news_tool.format_for_citation(articles)
 
             state["news_context"] = news_context
@@ -265,6 +268,20 @@ Gere o relatório seguindo o formato especificado."""
         """Create complete audit trail."""
         logger.info("Node: Creating audit trail")
 
+        # Only include messages from the LAST execution to avoid duplicates
+        # The first message is always the HumanMessage for this request
+        all_messages = state.get("messages", [])
+
+        # Find the index of the last HumanMessage (start of this execution)
+        last_human_idx = 0
+        for i in range(len(all_messages) - 1, -1, -1):
+            if isinstance(all_messages[i], HumanMessage):
+                last_human_idx = i
+                break
+
+        # Only include messages from this execution onwards
+        current_execution_messages = all_messages[last_human_idx:]
+
         audit_trail = {
             "timestamp": datetime.utcnow().isoformat(),
             "metrics": state.get("metrics"),
@@ -279,7 +296,7 @@ Gere o relatório seguindo o formato especificado."""
                     "type": msg.__class__.__name__,
                     "content": msg.content[:200] if hasattr(msg, 'content') else str(msg)[:200],
                 }
-                for msg in state.get("messages", [])
+                for msg in current_execution_messages
             ],
             "error": state.get("error"),
         }
@@ -310,6 +327,8 @@ Gere o relatório seguindo o formato especificado."""
         """
         logger.info(f"Generating SRAG report (days={days}, state={state_filter})")
 
+        start_time = time.time()
+
         # Initialize state with parameters
         initial_state = {
             "messages": [
@@ -328,8 +347,21 @@ Gere o relatório seguindo o formato especificado."""
             "iteration_count": 0,
         }
 
-        # Execute graph
-        final_state = self.graph.invoke(initial_state)
+        # Execute graph with fresh invocation
+        # Note: invoke() should not maintain state between calls, but we ensure
+        # initial_state is completely fresh for each request
+        final_state = self.graph.invoke(initial_state, {"recursion_limit": 50})
+
+        execution_time_ms = int((time.time() - start_time) * 1000)
+
+        # Save execution log to file
+        self._save_execution_log(
+            days=days,
+            state_filter=state_filter,
+            user_request=user_request,
+            final_state=final_state,
+            execution_time_ms=execution_time_ms
+        )
 
         return {
             "report": final_state.get("final_report"),
@@ -339,6 +371,61 @@ Gere o relatório seguindo o formato especificado."""
             "audit_trail": final_state.get("audit_trail"),
             "error": final_state.get("error"),
         }
+
+    def _save_execution_log(
+        self,
+        days: int,
+        state_filter: Optional[str],
+        user_request: Optional[str],
+        final_state: Dict[str, Any],
+        execution_time_ms: int
+    ) -> None:
+        """Save full execution log to file for audit and debugging."""
+        try:
+            # Create logs directory if it doesn't exist
+            logs_dir = Path("logs")
+            logs_dir.mkdir(exist_ok=True)
+
+            # Generate log filename with timestamp
+            timestamp = datetime.utcnow()
+            filename = f"execution_{timestamp.strftime('%Y%m%d_%H%M%S')}.json"
+            filepath = logs_dir / filename
+
+            # Prepare log data with ALL messages (not filtered)
+            log_data = {
+                "timestamp": timestamp.isoformat(),
+                "request": {
+                    "days": days,
+                    "state_filter": state_filter,
+                    "user_request": user_request,
+                },
+                "execution_time_ms": execution_time_ms,
+                "metrics": final_state.get("metrics"),
+                "news_citations": final_state.get("news_citations"),
+                "sql_queries": final_state.get("sql_queries"),
+                "chart_data_summary": {
+                    "daily_points": len(final_state.get("chart_data", {}).get("daily_30d", [])),
+                    "monthly_points": len(final_state.get("chart_data", {}).get("monthly_12m", [])),
+                },
+                "messages": [
+                    {
+                        "type": msg.__class__.__name__,
+                        "content": msg.content[:500] if hasattr(msg, 'content') else str(msg)[:500],
+                    }
+                    for msg in final_state.get("messages", [])
+                ],
+                "status": "error" if final_state.get("error") else "success",
+                "error": final_state.get("error"),
+            }
+
+            # Write to file
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(log_data, f, indent=2, ensure_ascii=False)
+
+            logger.info(f"Execution log saved to {filepath}")
+
+        except Exception as e:
+            logger.error(f"Failed to save execution log: {e}")
 
 
 # Global instance
