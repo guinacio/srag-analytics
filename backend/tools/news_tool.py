@@ -45,7 +45,8 @@ class NewsTool:
             List of news articles with title, url, content, published_date
         """
         if query is None:
-            query = "SRAG sindrome respiratoria aguda grave COVID-19 Brasil"
+            # Query in Portuguese to prioritize Portuguese-language results
+            query = "SRAG síndrome respiratória aguda grave COVID-19 Brasil notícias saúde"
 
         safe_days = max(1, days or 1)
         start_date, end_date = self._compute_date_window(safe_days)
@@ -57,7 +58,7 @@ class NewsTool:
             end_date,
         )
 
-        # Priority Brazilian news domains
+        # Priority Brazilian Portuguese news domains
         brazilian_domains = [
             "g1.globo.com",
             "oglobo.globo.com",
@@ -67,9 +68,29 @@ class NewsTool:
             "cnnbrasil.com.br",
             "saude.gov.br",
             "fiocruz.br",
+            "agencia.fiocruz.br",
             "butantan.gov.br",
             "msn.com.br",
-            "terra.com.br"
+            "terra.com.br",
+            "noticias.uol.com.br",
+            "saude.abril.com.br",
+            "bvsms.saude.gov.br",
+            "opendatasus.saude.gov.br",
+            "www.gov.br/saude",
+            "portal.fiocruz.br"
+        ]
+        
+        # Explicitly exclude English-language domains and English sections
+        english_domains = [
+            "biospace.com",
+            "bionews.com",
+            "medicalxpress.com",
+            "sciencedaily.com",
+            "reuters.com",
+            "bloomberg.com",
+            "forbes.com",
+            "folha.uol.com.br/internacional/en",  # Folha English edition
+            "www1.folha.uol.com.br/internacional/en"  # Folha English edition
         ]
 
         try:
@@ -78,9 +99,9 @@ class NewsTool:
                 search_depth="advanced",  # More comprehensive results
                 topic="news",  # Focus on news articles
                 max_results=max_results,
-                include_domains=brazilian_domains,  # Priority for Brazilian sources
-                exclude_domains=[],
-                days=safe_days,  # Use days parameter instead of explicit dates
+                include_domains=brazilian_domains,  # Priority Brazilian sources
+                exclude_domains=english_domains,  # Exclude English sites
+                days=safe_days,
             )
 
             # Map country codes to full names for Tavily API
@@ -97,18 +118,45 @@ class NewsTool:
 
             articles: List[Dict[str, Any]] = []
             for result in results.get("results", []):
+                # Stop if we have enough articles
+                if len(articles) >= max_results:
+                    break
+                
+                # Filter out English-language URLs
+                url = result.get("url", "")
+                if "/en/" in url or "/english/" in url or "/internacional/en" in url:
+                    logger.debug(f"Skipping English article: {url}")
+                    continue
+                
+                # Filter out non-SRAG related content
+                title = result.get("title", "")
+                content = result.get("content", "")
+                combined = (title + " " + content).lower()
+                
+                # Must contain SRAG-related keywords
+                srag_keywords = ["srag", "síndrome respiratória", "respiratória aguda", "covid", "gripe", "influenza", "saúde"]
+                if not any(keyword in combined for keyword in srag_keywords):
+                    logger.debug(f"Skipping non-SRAG article: {title[:50]}")
+                    continue
+                
+                # Extract date (may be empty for some sources)
                 published_date = self._extract_published_date(result)
+                if not published_date:
+                    # Fallback: mark as "Recente" (recent)
+                    published_date = "Recente"
+                
                 articles.append(
                     {
-                        "title": result.get("title", ""),
-                        "url": result.get("url", ""),
-                        "content": result.get("content", ""),
+                        "title": title,
+                        "url": url,
+                        "content": content,
                         "published_date": published_date,
                         "score": result.get("score", 0.0),
                     }
                 )
 
-            logger.info("Found %s news articles", len(articles))
+            logger.info("Found %s relevant Portuguese news articles (filtered from %s results)", 
+                       len(articles), len(results.get("results", [])))
             return articles
 
         except Exception as exc:  # pragma: no cover - defensive log
