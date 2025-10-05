@@ -4,7 +4,7 @@
 
 Before starting, ensure you have:
 
-- [x] Python 3.11 or higher
+- [x] Python 3.12 or higher
 - [x] Docker and Docker Compose
 - [x] OpenAI API key ([Get one here](https://platform.openai.com/api-keys))
 - [x] Tavily API key ([Get one here](https://tavily.com))
@@ -45,8 +45,8 @@ You should see:
 ### 3. Install Python Dependencies (Local)
 
 ```bash
-# Install the project in editable mode
-pip install -e .
+# Install dependencies
+uv sync
 ```
 
 This installs all dependencies from `pyproject.toml`.
@@ -59,13 +59,10 @@ Run these commands **in order**:
 
 #### 4a. Ingest SRAG Data
 
-**IMPORTANT**: This step processes ~165,000 rows and takes 5-10 minutes.
+**IMPORTANT**: This step processes thousands of rows and takes 5-10 minutes.
 
 ```bash
-# Option 1: Run locally (recommended)
-python -m backend.db.ingestion
-
-# Option 2: Run in Docker container
+# Run in Docker container
 docker-compose exec backend python -m backend.db.ingestion
 ```
 
@@ -82,13 +79,10 @@ Granting read-only permissions...
 Data ingestion complete!
 ```
 
-#### 4b. Parse Data Dictionary
+#### 4b. Parse Data Dictionary (optional)
 
 ```bash
-# Option 1: Run locally (recommended)
-python -m backend.db.dictionary_parser
-
-# Option 2: Run in Docker container
+# Run in Docker container
 docker-compose exec backend python -m backend.db.dictionary_parser
 ```
 
@@ -104,7 +98,7 @@ Successfully populated 11 dictionary entries
 
 ```bash
 # Start the Streamlit app
-streamlit run frontend/app.py
+uv run streamlit run frontend/app.py
 ```
 
 The app will open automatically at: http://localhost:8501
@@ -264,9 +258,9 @@ python -m backend.db.dictionary_parser
 
 3. **Database changes**: Re-run migrations or ingestion
 
-4. **Add new dependencies**: Update `pyproject.toml`, then:
+4. **Add new dependencies**: uv add package_name or update `pyproject.toml`, then:
    ```bash
-   pip install -e .
+   uv sync
    docker-compose up -d --build backend
    ```
 

@@ -4,7 +4,7 @@ Get the SRAG Analytics system running in under 10 minutes!
 
 ## Prerequisites Checklist
 
-- [ ] Python 3.11 or higher installed
+- [ ] Python 3.12 or higher installed
 - [ ] Docker and Docker Compose installed
 - [ ] OpenAI API key (get from [platform.openai.com](https://platform.openai.com))
 - [ ] Tavily API key (get from [tavily.com](https://tavily.com))
@@ -55,23 +55,18 @@ You should see:
 **Important**: The CSV files in `/data` need to be ingested.
 
 ```bash
-# Option A: Run from host (if you have Python installed)
-pip install -e .
-python -m backend.db.ingestion
-python -m backend.db.dictionary_parser
-
-# Option B: Run inside Docker container
+#  Run inside Docker container
 docker-compose exec backend python -m backend.db.ingestion
 docker-compose exec backend python -m backend.db.dictionary_parser
 ```
 
-**This will take 5-10 minutes** (165k rows being processed)
+**This will take 5-10 minutes** (Thousands of rows being processed)
 
 ### Step 5: Launch Frontend
 
 ```bash
 # Install dependencies if not already done
-pip install -e .
+uv sync
 
 # Run Streamlit
 streamlit run frontend/app.py
