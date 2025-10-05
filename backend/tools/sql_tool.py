@@ -89,9 +89,9 @@ class SafeSQLTool:
         )
 
         # Initialize LLM for SQL agent (when/if implemented)
-        # NOTE: Use gpt-4o-mini for cost-effective SQL generation
+        # NOTE: Use gpt-5-mini for cost-effective SQL generation
         self.llm = ChatOpenAI(
-            model="gpt-4o-mini",
+            model="gpt-5-mini",
             temperature=0,
             openai_api_key=settings.openai_api_key,
         )

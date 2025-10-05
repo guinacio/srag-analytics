@@ -98,7 +98,7 @@ class Guardrails:
         return False
 
     @staticmethod
-    def validate_output(output: str, max_length: int = 10000) -> Dict[str, Any]:
+    def validate_output(output: str, max_length: int = 1000000) -> Dict[str, Any]:
         """
         Validate LLM output for safety and quality.
 

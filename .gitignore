@@ -76,3 +76,4 @@ data_quality_check.py
 development_plan.md
 PROJECT_COMPLETION_SUMMARY.md
 project_summary.md
+docs/generate_architecture_diagram.py
