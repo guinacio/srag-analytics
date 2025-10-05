@@ -4,7 +4,7 @@ Get the SRAG Analytics system running in under 10 minutes!
 
 ## Prerequisites Checklist
 
-- [ ] Python 3.11 or higher installed
+- [ ] Python 3.12 or higher installed
 - [ ] Docker and Docker Compose installed
 - [ ] OpenAI API key (get from [platform.openai.com](https://platform.openai.com))
 - [ ] Tavily API key (get from [tavily.com](https://tavily.com))
