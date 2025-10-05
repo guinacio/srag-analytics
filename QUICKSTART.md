@@ -55,12 +55,7 @@ You should see:
 **Important**: The CSV files in `/data` need to be ingested.
 
 ```bash
-# Option A: Run from host (if you have Python installed)
-pip install -e .
-python -m backend.db.ingestion
-python -m backend.db.dictionary_parser
-
-# Option B: Run inside Docker container
+#  Run inside Docker container
 docker-compose exec backend python -m backend.db.ingestion
 docker-compose exec backend python -m backend.db.dictionary_parser
 ```
@@ -71,7 +66,7 @@ docker-compose exec backend python -m backend.db.dictionary_parser
 
 ```bash
 # Install dependencies if not already done
-pip install -e .
+uv sync
 
 # Run Streamlit
 streamlit run frontend/app.py
