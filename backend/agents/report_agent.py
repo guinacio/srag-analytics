@@ -53,7 +53,7 @@ class SRAGReportAgent:
     def __init__(self):
         """Initialize the agent and graph."""
         self.llm = ChatOpenAI(
-            model="gpt-5",
+            model="gpt-4o", # Originally gpt-5, changed to gpt-4o for speed responses on demo
             temperature=0.3,
             openai_api_key=settings.openai_api_key,
         )

@@ -56,15 +56,15 @@ def clean_row(row: Dict[str, str]) -> Dict[str, Any]:
         "co_mun_not": row.get("CO_MUN_NOT", "").strip(),
         "sg_uf": row.get("SG_UF", "").strip()[:2],
         "co_mun_res": row.get("CO_MUN_RES", "").strip(),
-        "cs_zona": row.get("CS_ZONA", "").strip()[:1],
+        "cs_zona": parse_int(row.get("CS_ZONA")),
 
         # Demographics
-        "cs_sexo": row.get("CS_SEXO", "").strip()[:1],
+        "cs_sexo": parse_int(row.get("CS_SEXO")),
         "dt_nasc": parse_date(row.get("DT_NASC")),
         "nu_idade_n": parse_int(row.get("NU_IDADE_N")),
-        "tp_idade": row.get("TP_IDADE", "").strip()[:1],
-        "cs_raca": row.get("CS_RACA", "").strip()[:1],
-        "cs_escol_n": row.get("CS_ESCOL_N", "").strip()[:1],
+        "tp_idade": parse_int(row.get("TP_IDADE")),
+        "cs_raca": parse_int(row.get("CS_RACA")),
+        "cs_escol_n": parse_int(row.get("CS_ESCOL_N")),
 
         # Clinical
         "febre": parse_int(row.get("FEBRE")),
@@ -99,10 +99,10 @@ def clean_row(row: Dict[str, str]) -> Dict[str, Any]:
         "vacina": parse_int(row.get("VACINA")),
         "dt_ut_dose": parse_date(row.get("DT_UT_DOSE")),
         "vacina_cov": parse_int(row.get("VACINA_COV")),
-        "dose_1_cov": parse_int(row.get("DOSE_1_COV")),
-        "dose_2_cov": parse_int(row.get("DOSE_2_COV")),
-        "dose_ref": parse_int(row.get("DOSE_REF")),
-        "dose_2ref": parse_int(row.get("DOSE_2REF")),
+        "dose_1_cov": parse_date(row.get("DOSE_1_COV")),
+        "dose_2_cov": parse_date(row.get("DOSE_2_COV")),
+        "dose_ref": parse_date(row.get("DOSE_REF")),
+        "dose_2ref": parse_date(row.get("DOSE_2REF")),
 
         # Laboratory
         "pcr_resul": parse_int(row.get("PCR_RESUL")),
@@ -160,19 +160,20 @@ def compute_daily_metrics() -> None:
     """
     Compute and materialize daily metrics for fast chart rendering.
     
-    Creates cumulative totals (total_*) and daily counts (new_*):
+    Creates both national (state=NULL) and per-state metrics with:
     - total_cases: cumulative cases up to that date
     - new_cases: new cases on that specific date
     - Same pattern for deaths, ICU admissions, and vaccinated cases
     """
-    logger.info("Computing daily metrics...")
+    logger.info("Computing daily metrics (national + per-state)...")
 
     with engine.connect() as conn:
         # Clear existing metrics
         conn.execute(text("TRUNCATE TABLE daily_metrics"))
 
-        # Compute daily aggregates with cumulative totals
-        query = text("""
+        # 1. Compute NATIONAL metrics (state = NULL)
+        logger.info("Computing national daily metrics...")
+        query_national = text("""
             WITH daily_base AS (
                 SELECT
                     dt_sin_pri::date AS metric_date,
@@ -187,6 +188,7 @@ def compute_daily_metrics() -> None:
             cumulative AS (
                 SELECT
                     metric_date,
+                    NULL as state,
                     SUM(daily_cases) OVER (ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_cases,
                     daily_cases AS new_cases,
                     SUM(daily_deaths) OVER (ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_deaths,
@@ -196,9 +198,10 @@ def compute_daily_metrics() -> None:
                 FROM daily_base
             )
             INSERT INTO daily_metrics 
-                (metric_date, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
+                (metric_date, state, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
             SELECT
                 metric_date,
+                state,
                 total_cases,
                 new_cases,
                 total_deaths,
@@ -207,10 +210,55 @@ def compute_daily_metrics() -> None:
                 vaccinated_cases
             FROM cumulative
         """)
-        conn.execute(query)
+        conn.execute(query_national)
         conn.commit()
 
-    logger.info("Daily metrics computed successfully")
+        # 2. Compute PER-STATE metrics
+        logger.info("Computing per-state daily metrics...")
+        query_states = text("""
+            WITH daily_base AS (
+                SELECT
+                    dt_sin_pri::date AS metric_date,
+                    sg_uf_not AS state,
+                    COUNT(*) AS daily_cases,
+                    SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) AS daily_deaths,
+                    SUM(CASE WHEN uti = 1 THEN 1 ELSE 0 END) AS daily_icu_adm,
+                    SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) AS daily_vaccinated
+                FROM srag_cases
+                WHERE dt_sin_pri IS NOT NULL
+                  AND sg_uf_not IS NOT NULL
+                  AND sg_uf_not != ''
+                GROUP BY dt_sin_pri::date, sg_uf_not
+            ),
+            cumulative AS (
+                SELECT
+                    metric_date,
+                    state,
+                    SUM(daily_cases) OVER (PARTITION BY state ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_cases,
+                    daily_cases AS new_cases,
+                    SUM(daily_deaths) OVER (PARTITION BY state ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_deaths,
+                    daily_deaths AS new_deaths,
+                    daily_icu_adm AS icu_admissions,
+                    daily_vaccinated AS vaccinated_cases
+                FROM daily_base
+            )
+            INSERT INTO daily_metrics 
+                (metric_date, state, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
+            SELECT
+                metric_date,
+                state,
+                total_cases,
+                new_cases,
+                total_deaths,
+                new_deaths,
+                icu_admissions,
+                vaccinated_cases
+            FROM cumulative
+        """)
+        conn.execute(query_states)
+        conn.commit()
+
+    logger.info("Daily metrics computed successfully (national + per-state)")
 
 
 def compute_monthly_metrics() -> None:

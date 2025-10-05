@@ -26,6 +26,8 @@ class MetricsTool:
         """
         Calculate case increase rate comparing last N days vs previous N days.
 
+        Uses daily_metrics table with state filtering for fast queries.
+
         Returns:
             {
                 'current_period_cases': int,
@@ -35,25 +37,30 @@ class MetricsTool:
                 'state': str or None
             }
         """
-        logger.info(f"Calculating case increase rate (last {days} days)")
+        logger.info(f"Calculating case increase rate (last {days} days, state={state})")
 
         with get_db() as db:
-            # Use bound parameters to prevent SQL injection
-            state_filter = "AND sg_uf_not = :state" if state else ""
+            # Always use daily_metrics (now includes per-state data)
+            if state:
+                state_filter = "AND state = :state"
+                params = {'days': days, 'days_double': days * 2, 'state': state}
+            else:
+                state_filter = "AND state IS NULL"  # National totals
+                params = {'days': days, 'days_double': days * 2}
 
             query = text(f"""
                 WITH current_period AS (
-                    SELECT COUNT(*) as cases
-                    FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'
-                      AND dt_sin_pri < CURRENT_DATE
+                    SELECT COALESCE(SUM(new_cases), 0) as cases
+                    FROM daily_metrics
+                    WHERE metric_date >= CURRENT_DATE - :days * INTERVAL '1 day'
+                      AND metric_date < CURRENT_DATE
                       {state_filter}
                 ),
                 previous_period AS (
-                    SELECT COUNT(*) as cases
-                    FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - :days_double * INTERVAL '1 day'
-                      AND dt_sin_pri < CURRENT_DATE - :days * INTERVAL '1 day'
+                    SELECT COALESCE(SUM(new_cases), 0) as cases
+                    FROM daily_metrics
+                    WHERE metric_date >= CURRENT_DATE - :days_double * INTERVAL '1 day'
+                      AND metric_date < CURRENT_DATE - :days * INTERVAL '1 day'
                       {state_filter}
                 )
                 SELECT
@@ -65,10 +72,6 @@ class MetricsTool:
                     END as increase_rate
                 FROM current_period c, previous_period p
             """)
-
-            params = {'days': days, 'days_double': days * 2}
-            if state:
-                params['state'] = state
 
             result = db.execute(query, params).first()
 
@@ -88,6 +91,8 @@ class MetricsTool:
         """
         Calculate mortality rate (deaths / total cases).
 
+        Uses daily_metrics table with state filtering for fast queries.
+
         Args:
             days: If specified, calculate for last N days only
             state: If specified, filter by state
@@ -101,31 +106,34 @@ class MetricsTool:
                 'state': str or None
             }
         """
-        logger.info(f"Calculating mortality rate")
+        logger.info(f"Calculating mortality rate (days={days}, state={state})")
 
         with get_db() as db:
-            date_filter = "AND dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'" if days else ""
-            state_filter = "AND sg_uf_not = :state" if state else ""
-
+            # Always use daily_metrics (now includes per-state data)
+            if state:
+                state_filter = "AND state = :state"
+                params = {'state': state}
+            else:
+                state_filter = "AND state IS NULL"  # National totals
+                params = {}
+            
+            if days:
+                date_filter = f"WHERE metric_date >= CURRENT_DATE - :days * INTERVAL '1 day' {state_filter}"
+                params['days'] = days
+            else:
+                date_filter = f"WHERE 1=1 {state_filter}"
+                
             query = text(f"""
                 SELECT
-                    COUNT(*) as total_cases,
-                    SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) as total_deaths,
+                    COALESCE(SUM(new_cases), 0) as total_cases,
+                    COALESCE(SUM(new_deaths), 0) as total_deaths,
                     CASE
-                        WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
+                        WHEN SUM(new_cases) > 0 THEN (SUM(new_deaths)::float / SUM(new_cases) * 100)
                         ELSE 0
                     END as mortality_rate
-                FROM srag_cases
-                WHERE evolucao IS NOT NULL
-                  {date_filter}
-                  {state_filter}
+                FROM daily_metrics
+                {date_filter}
             """)
-
-            params = {}
-            if days:
-                params['days'] = days
-            if state:
-                params['state'] = state
 
             result = db.execute(query, params).first()
 
@@ -201,18 +209,20 @@ class MetricsTool:
         """
         Calculate vaccination rate among SRAG cases.
 
+        Now properly checks dose dates (dose_*_cov are DATE fields, not integers).
+
         Returns:
             {
                 'total_cases': int (all cases in period),
-                'vaccinated_cases': int (at least 1 dose),
-                'fully_vaccinated_cases': int (2+ doses: dose_2_cov OR dose_ref OR dose_2ref),
+                'vaccinated_cases': int (vacina_cov=1, meaning vaccinated),
+                'fully_vaccinated_cases': int (has dose_2_cov OR dose_ref OR dose_2ref date),
                 'vaccination_rate': float (percentage of all cases),
                 'full_vaccination_rate': float (percentage of all cases),
                 'period_days': int or None,
                 'state': str or None
             }
         """
-        logger.info(f"Calculating vaccination rate")
+        logger.info(f"Calculating vaccination rate (days={days}, state={state})")
 
         with get_db() as db:
             date_filter = "AND dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'" if days else ""
@@ -222,13 +232,13 @@ class MetricsTool:
                 SELECT
                     COUNT(*) as total_cases,
                     SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) as vaccinated,
-                    SUM(CASE WHEN (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1) THEN 1 ELSE 0 END) as fully_vaccinated,
+                    SUM(CASE WHEN (dose_2_cov IS NOT NULL OR dose_ref IS NOT NULL OR dose_2ref IS NOT NULL) THEN 1 ELSE 0 END) as fully_vaccinated,
                     CASE
                         WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
                         ELSE 0
                     END as vac_rate,
                     CASE
-                        WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1) THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
+                        WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN (dose_2_cov IS NOT NULL OR dose_ref IS NOT NULL OR dose_2ref IS NOT NULL) THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
                         ELSE 0
                     END as full_vac_rate
                 FROM srag_cases
@@ -282,32 +292,24 @@ class MetricsTool:
     ) -> List[Dict[str, Any]]:
         """Get daily cases for the last N days (for chart)."""
         with get_db() as db:
+            # Always use daily_metrics (now includes per-state data)
             if state:
-                # Query raw data with state filter
-                query = text("""
-                    SELECT
-                        dt_sin_pri::text as date,
-                        COUNT(*) as cases
-                    FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'
-                      AND dt_sin_pri < CURRENT_DATE
-                      AND sg_uf_not = :state
-                    GROUP BY dt_sin_pri
-                    ORDER BY dt_sin_pri
-                """)
+                state_filter = "AND state = :state"
                 params = {'days': days, 'state': state}
             else:
-                # Use materialized view for faster queries
-                query = text("""
-                    SELECT
-                        metric_date::text as date,
-                        new_cases as cases
-                    FROM daily_metrics
-                    WHERE metric_date >= CURRENT_DATE - :days * INTERVAL '1 day'
-                      AND metric_date < CURRENT_DATE
-                    ORDER BY metric_date
-                """)
+                state_filter = "AND state IS NULL"  # National totals
                 params = {'days': days}
+            
+            query = text(f"""
+                SELECT
+                    metric_date::text as date,
+                    new_cases as cases
+                FROM daily_metrics
+                WHERE metric_date >= CURRENT_DATE - :days * INTERVAL '1 day'
+                  AND metric_date < CURRENT_DATE
+                  {state_filter}
+                ORDER BY metric_date
+            """)
 
             result = db.execute(query, params)
             return [{'date': row.date, 'cases': row.cases} for row in result]
@@ -357,16 +359,27 @@ class MetricsTool:
                 for row in result
             ]
 
-    def get_cumulative_totals(self) -> Dict[str, Any]:
+    def get_cumulative_totals(self, state: Optional[str] = None) -> Dict[str, Any]:
         """
         Get the most recent cumulative totals from daily_metrics.
         
         Returns the latest cumulative counts for dashboard KPIs.
+        
+        Args:
+            state: If specified, return totals for that state only
         """
         with get_db() as db:
-            query = text("""
+            if state:
+                state_filter = "WHERE state = :state"
+                params = {'state': state}
+            else:
+                state_filter = "WHERE state IS NULL"  # National totals
+                params = {}
+            
+            query = text(f"""
                 SELECT
                     metric_date,
+                    state,
                     total_cases,
                     total_deaths,
                     CASE 
@@ -374,25 +387,28 @@ class MetricsTool:
                         ELSE 0
                     END as cumulative_mortality_rate
                 FROM daily_metrics
+                {state_filter}
                 ORDER BY metric_date DESC
                 LIMIT 1
             """)
             
-            result = db.execute(query).first()
+            result = db.execute(query, params).first()
             
             if not result:
                 return {
                     'total_cases': 0,
                     'total_deaths': 0,
                     'cumulative_mortality_rate': 0.0,
-                    'as_of_date': None
+                    'as_of_date': None,
+                    'state': state
                 }
             
             return {
                 'total_cases': result.total_cases,
                 'total_deaths': result.total_deaths,
                 'cumulative_mortality_rate': float(result.cumulative_mortality_rate),
-                'as_of_date': str(result.metric_date)
+                'as_of_date': str(result.metric_date),
+                'state': state
             }
 
 

@@ -33,15 +33,15 @@ class SRAGCase(Base):
     co_mun_not = Column(String(10))  # Municipality code of notification
     sg_uf = Column(String(2))  # State of residence
     co_mun_res = Column(String(10))  # Municipality of residence
-    cs_zona = Column(String(1))  # Zone (urban/rural)
+    cs_zona = Column(Integer)  # Zone (1=urban, 2=rural, 3=periurban, 9=ignored)
 
     # Demographics
-    cs_sexo = Column(String(1))  # Sex
+    cs_sexo = Column(Integer)  # Sex (1=male, 2=female, 9=ignored)
     dt_nasc = Column(Date)  # Birth date
     nu_idade_n = Column(Integer)  # Age number
-    tp_idade = Column(String(1))  # Age type
-    cs_raca = Column(String(1))  # Race/ethnicity
-    cs_escol_n = Column(String(1))  # Education level
+    tp_idade = Column(Integer)  # Age type (1=day, 2=month, 3=year)
+    cs_raca = Column(Integer)  # Race/ethnicity (1-5 scale, 9=ignored)
+    cs_escol_n = Column(Integer)  # Education level (0-5 scale, 9=ignored)
 
     # Clinical presentation
     febre = Column(Integer)  # Fever (1=yes, 2=no, 9=ignored)
@@ -75,11 +75,11 @@ class SRAGCase(Base):
     # Vaccination (critical for metrics)
     vacina = Column(Integer, index=True)  # Flu vaccine
     dt_ut_dose = Column(Date)  # Last flu vaccine dose date
-    vacina_cov = Column(Integer, index=True)  # COVID vaccine
-    dose_1_cov = Column(Integer)  # COVID dose 1
-    dose_2_cov = Column(Integer)  # COVID dose 2
-    dose_ref = Column(Integer)  # COVID booster
-    dose_2ref = Column(Integer)  # COVID 2nd booster
+    vacina_cov = Column(Integer, index=True)  # COVID vaccine (1=yes, 2=no, 9=ignored)
+    dose_1_cov = Column(Date, index=True)  # COVID dose 1 DATE
+    dose_2_cov = Column(Date, index=True)  # COVID dose 2 DATE
+    dose_ref = Column(Date, index=True)  # COVID booster DATE
+    dose_2ref = Column(Date, index=True)  # COVID 2nd booster DATE
 
     # Laboratory
     pcr_resul = Column(Integer)  # PCR result
@@ -134,11 +134,14 @@ class DailyMetrics(Base):
     """
     Materialized daily metrics for fast chart rendering.
     Pre-computed from srag_cases for performance.
+    
+    Stores both national totals (state=NULL) and per-state metrics.
     """
     __tablename__ = "daily_metrics"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    metric_date = Column(Date, unique=True, index=True)
+    metric_date = Column(Date, index=True)
+    state = Column(String(2), index=True, nullable=True)  # NULL = national total
     total_cases = Column(Integer, default=0)
     new_cases = Column(Integer, default=0)
     total_deaths = Column(Integer, default=0)
@@ -146,11 +149,12 @@ class DailyMetrics(Base):
     icu_admissions = Column(Integer, default=0)
     vaccinated_cases = Column(Integer, default=0)
 
-    # State-level aggregates (optional)
-    uf_breakdown = Column(Text)  # JSON with per-state counts
-
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_daily_metrics_date_state', 'metric_date', 'state', unique=True),
+    )
 
 
 class MonthlyMetrics(Base):
