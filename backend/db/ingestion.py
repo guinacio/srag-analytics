@@ -157,28 +157,55 @@ def ingest_csv(csv_path: Path, batch_size: int = 1000) -> int:
 
 
 def compute_daily_metrics() -> None:
-    """Compute and materialize daily metrics for fast chart rendering."""
+    """
+    Compute and materialize daily metrics for fast chart rendering.
+    
+    Creates cumulative totals (total_*) and daily counts (new_*):
+    - total_cases: cumulative cases up to that date
+    - new_cases: new cases on that specific date
+    - Same pattern for deaths, ICU admissions, and vaccinated cases
+    """
     logger.info("Computing daily metrics...")
 
     with engine.connect() as conn:
         # Clear existing metrics
         conn.execute(text("TRUNCATE TABLE daily_metrics"))
 
-        # Compute daily aggregates
+        # Compute daily aggregates with cumulative totals
         query = text("""
-            INSERT INTO daily_metrics (metric_date, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
+            WITH daily_base AS (
+                SELECT
+                    dt_sin_pri::date AS metric_date,
+                    COUNT(*) AS daily_cases,
+                    SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) AS daily_deaths,
+                    SUM(CASE WHEN uti = 1 THEN 1 ELSE 0 END) AS daily_icu_adm,
+                    SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) AS daily_vaccinated
+                FROM srag_cases
+                WHERE dt_sin_pri IS NOT NULL
+                GROUP BY dt_sin_pri::date
+            ),
+            cumulative AS (
+                SELECT
+                    metric_date,
+                    SUM(daily_cases) OVER (ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_cases,
+                    daily_cases AS new_cases,
+                    SUM(daily_deaths) OVER (ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_deaths,
+                    daily_deaths AS new_deaths,
+                    daily_icu_adm AS icu_admissions,
+                    daily_vaccinated AS vaccinated_cases
+                FROM daily_base
+            )
+            INSERT INTO daily_metrics 
+                (metric_date, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
             SELECT
-                dt_sin_pri as metric_date,
-                COUNT(*) as total_cases,
-                COUNT(*) as new_cases,
-                SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) as total_deaths,
-                SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) as new_deaths,
-                SUM(CASE WHEN uti = 1 THEN 1 ELSE 0 END) as icu_admissions,
-                SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) as vaccinated_cases
-            FROM srag_cases
-            WHERE dt_sin_pri IS NOT NULL
-            GROUP BY dt_sin_pri
-            ORDER BY dt_sin_pri
+                metric_date,
+                total_cases,
+                new_cases,
+                total_deaths,
+                new_deaths,
+                icu_admissions,
+                vaccinated_cases
+            FROM cumulative
         """)
         conn.execute(query)
         conn.commit()

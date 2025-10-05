@@ -357,6 +357,44 @@ class MetricsTool:
                 for row in result
             ]
 
+    def get_cumulative_totals(self) -> Dict[str, Any]:
+        """
+        Get the most recent cumulative totals from daily_metrics.
+        
+        Returns the latest cumulative counts for dashboard KPIs.
+        """
+        with get_db() as db:
+            query = text("""
+                SELECT
+                    metric_date,
+                    total_cases,
+                    total_deaths,
+                    CASE 
+                        WHEN total_cases > 0 THEN (total_deaths::float / total_cases * 100)
+                        ELSE 0
+                    END as cumulative_mortality_rate
+                FROM daily_metrics
+                ORDER BY metric_date DESC
+                LIMIT 1
+            """)
+            
+            result = db.execute(query).first()
+            
+            if not result:
+                return {
+                    'total_cases': 0,
+                    'total_deaths': 0,
+                    'cumulative_mortality_rate': 0.0,
+                    'as_of_date': None
+                }
+            
+            return {
+                'total_cases': result.total_cases,
+                'total_deaths': result.total_deaths,
+                'cumulative_mortality_rate': float(result.cumulative_mortality_rate),
+                'as_of_date': str(result.metric_date)
+            }
+
 
 # Global instance
 metrics_tool = MetricsTool()
