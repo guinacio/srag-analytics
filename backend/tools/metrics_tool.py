@@ -38,22 +38,22 @@ class MetricsTool:
         logger.info(f"Calculating case increase rate (last {days} days)")
 
         with get_db() as db:
-            # Get current period (last N days)
-            state_filter = f"AND sg_uf_not = '{state}'" if state else ""
+            # Use bound parameters to prevent SQL injection
+            state_filter = "AND sg_uf_not = :state" if state else ""
 
             query = text(f"""
                 WITH current_period AS (
                     SELECT COUNT(*) as cases
                     FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - INTERVAL '{days} days'
+                    WHERE dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'
                       AND dt_sin_pri < CURRENT_DATE
                       {state_filter}
                 ),
                 previous_period AS (
                     SELECT COUNT(*) as cases
                     FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - INTERVAL '{days * 2} days'
-                      AND dt_sin_pri < CURRENT_DATE - INTERVAL '{days} days'
+                    WHERE dt_sin_pri >= CURRENT_DATE - :days_double * INTERVAL '1 day'
+                      AND dt_sin_pri < CURRENT_DATE - :days * INTERVAL '1 day'
                       {state_filter}
                 )
                 SELECT
@@ -66,7 +66,11 @@ class MetricsTool:
                 FROM current_period c, previous_period p
             """)
 
-            result = db.execute(query).first()
+            params = {'days': days, 'days_double': days * 2}
+            if state:
+                params['state'] = state
+
+            result = db.execute(query, params).first()
 
             return {
                 'current_period_cases': result.current_cases,
@@ -100,8 +104,8 @@ class MetricsTool:
         logger.info(f"Calculating mortality rate")
 
         with get_db() as db:
-            date_filter = f"AND dt_sin_pri >= CURRENT_DATE - INTERVAL '{days} days'" if days else ""
-            state_filter = f"AND sg_uf_not = '{state}'" if state else ""
+            date_filter = "AND dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'" if days else ""
+            state_filter = "AND sg_uf_not = :state" if state else ""
 
             query = text(f"""
                 SELECT
@@ -117,7 +121,13 @@ class MetricsTool:
                   {state_filter}
             """)
 
-            result = db.execute(query).first()
+            params = {}
+            if days:
+                params['days'] = days
+            if state:
+                params['state'] = state
+
+            result = db.execute(query, params).first()
 
             return {
                 'total_cases': result.total_cases,
@@ -150,8 +160,8 @@ class MetricsTool:
         logger.info(f"Calculating ICU occupancy rate")
 
         with get_db() as db:
-            date_filter = f"AND dt_sin_pri >= CURRENT_DATE - INTERVAL '{days} days'" if days else ""
-            state_filter = f"AND sg_uf_not = '{state}'" if state else ""
+            date_filter = "AND dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'" if days else ""
+            state_filter = "AND sg_uf_not = :state" if state else ""
 
             query = text(f"""
                 SELECT
@@ -167,7 +177,13 @@ class MetricsTool:
                   {state_filter}
             """)
 
-            result = db.execute(query).first()
+            params = {}
+            if days:
+                params['days'] = days
+            if state:
+                params['state'] = state
+
+            result = db.execute(query, params).first()
 
             return {
                 'total_hospitalizations': result.total_hospitalizations,
@@ -187,11 +203,11 @@ class MetricsTool:
 
         Returns:
             {
-                'total_cases': int,
-                'vaccinated_cases': int,
-                'fully_vaccinated_cases': int (2+ doses),
-                'vaccination_rate': float (percentage),
-                'full_vaccination_rate': float (percentage),
+                'total_cases': int (all cases in period),
+                'vaccinated_cases': int (at least 1 dose),
+                'fully_vaccinated_cases': int (2+ doses: dose_2_cov OR dose_ref OR dose_2ref),
+                'vaccination_rate': float (percentage of all cases),
+                'full_vaccination_rate': float (percentage of all cases),
                 'period_days': int or None,
                 'state': str or None
             }
@@ -199,29 +215,35 @@ class MetricsTool:
         logger.info(f"Calculating vaccination rate")
 
         with get_db() as db:
-            date_filter = f"AND dt_sin_pri >= CURRENT_DATE - INTERVAL '{days} days'" if days else ""
-            state_filter = f"AND sg_uf_not = '{state}'" if state else ""
+            date_filter = "AND dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'" if days else ""
+            state_filter = "AND sg_uf_not = :state" if state else ""
 
             query = text(f"""
                 SELECT
                     COUNT(*) as total_cases,
                     SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) as vaccinated,
-                    SUM(CASE WHEN dose_2_cov = 1 THEN 1 ELSE 0 END) as fully_vaccinated,
+                    SUM(CASE WHEN (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1) THEN 1 ELSE 0 END) as fully_vaccinated,
                     CASE
                         WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
                         ELSE 0
                     END as vac_rate,
                     CASE
-                        WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN dose_2_cov = 1 THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
+                        WHEN COUNT(*) > 0 THEN (SUM(CASE WHEN (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1) THEN 1 ELSE 0 END)::float / COUNT(*) * 100)
                         ELSE 0
                     END as full_vac_rate
                 FROM srag_cases
-                WHERE vacina_cov IS NOT NULL
+                WHERE dt_sin_pri IS NOT NULL
                   {date_filter}
                   {state_filter}
             """)
 
-            result = db.execute(query).first()
+            params = {}
+            if days:
+                params['days'] = days
+            if state:
+                params['state'] = state
+
+            result = db.execute(query, params).first()
 
             return {
                 'total_cases': result.total_cases,
@@ -262,30 +284,32 @@ class MetricsTool:
         with get_db() as db:
             if state:
                 # Query raw data with state filter
-                query = text(f"""
+                query = text("""
                     SELECT
                         dt_sin_pri::text as date,
                         COUNT(*) as cases
                     FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - INTERVAL '{days} days'
+                    WHERE dt_sin_pri >= CURRENT_DATE - :days * INTERVAL '1 day'
                       AND dt_sin_pri < CURRENT_DATE
-                      AND sg_uf_not = '{state}'
+                      AND sg_uf_not = :state
                     GROUP BY dt_sin_pri
                     ORDER BY dt_sin_pri
                 """)
+                params = {'days': days, 'state': state}
             else:
                 # Use materialized view for faster queries
-                query = text(f"""
+                query = text("""
                     SELECT
                         metric_date::text as date,
                         new_cases as cases
                     FROM daily_metrics
-                    WHERE metric_date >= CURRENT_DATE - INTERVAL '{days} days'
+                    WHERE metric_date >= CURRENT_DATE - :days * INTERVAL '1 day'
                       AND metric_date < CURRENT_DATE
                     ORDER BY metric_date
                 """)
+                params = {'days': days}
 
-            result = db.execute(query)
+            result = db.execute(query, params)
             return [{'date': row.date, 'cases': row.cases} for row in result]
 
     def get_monthly_cases_chart_data(
@@ -297,30 +321,32 @@ class MetricsTool:
         with get_db() as db:
             if state:
                 # Query raw data with state filter
-                query = text(f"""
+                query = text("""
                     SELECT
                         EXTRACT(YEAR FROM dt_sin_pri)::int as year,
                         EXTRACT(MONTH FROM dt_sin_pri)::int as month,
                         COUNT(*) as total_cases
                     FROM srag_cases
-                    WHERE dt_sin_pri >= CURRENT_DATE - INTERVAL '{months} months'
-                      AND sg_uf_not = '{state}'
+                    WHERE dt_sin_pri >= CURRENT_DATE - :months * INTERVAL '1 month'
+                      AND sg_uf_not = :state
                     GROUP BY year, month
                     ORDER BY year, month
                 """)
+                params = {'months': months, 'state': state}
             else:
                 # Use materialized view for faster queries
-                query = text(f"""
+                query = text("""
                     SELECT
                         year,
                         month,
                         total_cases
                     FROM monthly_metrics
-                    WHERE (year * 12 + month) >= (EXTRACT(YEAR FROM CURRENT_DATE) * 12 + EXTRACT(MONTH FROM CURRENT_DATE) - {months})
+                    WHERE (year * 12 + month) >= (EXTRACT(YEAR FROM CURRENT_DATE) * 12 + EXTRACT(MONTH FROM CURRENT_DATE) - :months)
                     ORDER BY year, month
                 """)
+                params = {'months': months}
 
-            result = db.execute(query)
+            result = db.execute(query, params)
             return [
                 {
                     'year': row.year,

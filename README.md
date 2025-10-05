@@ -297,21 +297,198 @@ curl -X POST http://localhost:8000/generate_report \
 
 ### Metrics Explained
 
-1. **Taxa de aumento de casos** (Case increase rate)
-   - Compares current period vs previous period
-   - Formula: `(current_cases - previous_cases) / previous_cases * 100`
+All metrics are calculated using **DATASUS field definitions** from the official data dictionary. Below are the precise calculation methods and denominators used.
 
-2. **Taxa de mortalidade** (Mortality rate)
-   - Deaths as percentage of total cases
-   - Formula: `deaths / total_cases * 100`
+#### 1. Taxa de aumento de casos (Case Increase Rate)
 
-3. **Taxa de ocupação de UTI** (ICU occupancy rate)
-   - ICU admissions as percentage of hospitalizations
-   - Formula: `icu_cases / hospitalized_cases * 100`
+**Definition**: Percentage change in cases between current and previous period.
 
-4. **Taxa de vacinação** (Vaccination rate)
-   - Vaccinated cases as percentage of total
-   - Formula: `vaccinated_cases / total_cases * 100`
+**Formula**:
+```
+Δ% = ((casos_período_atual - casos_período_anterior) / casos_período_anterior) * 100
+```
+
+**Fields Used**:
+- `DT_SIN_PRI` (Date of first symptoms) - Used to determine case period
+- Count all cases where `DT_SIN_PRI` falls within the specified time window
+
+**Denominator**: Total cases in the **previous period** (N days before current period)
+
+**Example**: For a 30-day report:
+- Current period: Last 30 days → 1,000 cases
+- Previous period: 30 days before that → 800 cases
+- Increase rate: `((1000 - 800) / 800) * 100 = 25%`
+
+**UI Label**: `Taxa de aumento de casos — Δ% (últimos N dias vs N anteriores) por DT_SIN_PRI`
+
+---
+
+#### 2. Taxa de mortalidade (Mortality Rate)
+
+**Definition**: Percentage of deaths among cases in the period **with a recorded outcome**.
+
+**Formula**:
+```
+Taxa = (óbitos / casos_com_evolução_registrada) * 100
+```
+
+**Fields Used**:
+- `EVOLUCAO` (Case outcome):
+  - `1` = Cura (Recovery)
+  - `2` = Óbito (Death)
+  - `3` = Óbito por outras causas (Death by other causes)
+  - `9` = Ignorado (Unknown)
+- `DT_SIN_PRI` (Date of first symptoms) - For period filtering
+
+**Calculation**:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE evolucao = 2) AS deaths,
+  COUNT(*) FILTER (WHERE evolucao IN (1, 2)) AS cases_with_outcome,
+  (COUNT(*) FILTER (WHERE evolucao = 2)::float /
+   COUNT(*) FILTER (WHERE evolucao IN (1, 2))) * 100 AS mortality_rate
+FROM srag_cases
+WHERE evolucao IN (1, 2)  -- Only cases with known outcome
+  AND dt_sin_pri >= CURRENT_DATE - INTERVAL '30 days'
+```
+
+**Denominator**: Cases with recorded outcome (`EVOLUCAO IN (1, 2)`) — **not all cases in the period**
+
+**Rationale**: Using all cases (including those still hospitalized) would artificially lower the mortality rate. We only include cases with a final outcome (recovery or death).
+
+**UI Label**: `Taxa de mortalidade (entre casos do período) — óbitos (evolucao=2) ÷ casos com evolucao preenchida`
+
+---
+
+#### 3. Taxa de ocupação de UTI (ICU Occupancy Rate)
+
+**Definition**: Percentage of hospitalized cases that required ICU admission.
+
+**Formula**:
+```
+Taxa = (casos_internados_em_UTI / casos_hospitalizados) * 100
+```
+
+**Fields Used**:
+- `HOSPITAL` (Hospitalization status):
+  - `1` = Sim (Yes)
+  - `2` = Não (No)
+  - `9` = Ignorado (Unknown)
+- `UTI` (ICU admission):
+  - `1` = Sim (Yes)
+  - `2` = Não (No)
+  - `9` = Ignorado (Unknown)
+- `DT_SIN_PRI` (Date of first symptoms) - For period filtering
+
+**Calculation**:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE uti = 1) AS icu_cases,
+  COUNT(*) AS hospitalized_cases,
+  (COUNT(*) FILTER (WHERE uti = 1)::float / COUNT(*)) * 100 AS icu_rate
+FROM srag_cases
+WHERE hospital = 1  -- Only hospitalized cases
+  AND dt_sin_pri >= CURRENT_DATE - INTERVAL '30 days'
+```
+
+**Denominator**: Hospitalized cases (`HOSPITAL = 1`) — **not all cases in the period**
+
+**Rationale**: ICU occupancy is a proxy for disease severity among hospitalized patients, not the general case population.
+
+**UI Label**: `Taxa de UTI entre internados (proxy) — UTI=1 ÷ HOSPITAL=1`
+
+---
+
+#### 4. Taxa de vacinação (Vaccination Rate)
+
+**Definition**: Percentage of cases that received at least one COVID-19 vaccine dose.
+
+**Formula**:
+```
+Taxa = (casos_vacinados / total_casos_no_período) * 100
+```
+
+**Fields Used**:
+- `VACINA_COV` (Received COVID-19 vaccine):
+  - `1` = Sim (Yes)
+  - `2` = Não (No)
+  - `9` = Ignorado (Unknown)
+- `DT_SIN_PRI` (Date of first symptoms) - For period filtering
+
+**Calculation**:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE vacina_cov = 1) AS vaccinated,
+  COUNT(*) AS total_cases,
+  (COUNT(*) FILTER (WHERE vacina_cov = 1)::float / COUNT(*)) * 100 AS vaccination_rate
+FROM srag_cases
+WHERE dt_sin_pri IS NOT NULL
+  AND dt_sin_pri >= CURRENT_DATE - INTERVAL '30 days'
+```
+
+**Denominator**: **All cases** in the period with a symptom date (`DT_SIN_PRI IS NOT NULL`)
+
+**Rationale**: Missing vaccination data (`VACINA_COV IS NULL` or `= 9`) is treated as unvaccinated, following standard epidemiological practice. This provides a conservative estimate of vaccination coverage.
+
+**Alternative Denominator** (not currently used): If you want vaccination rate "among cases with known vaccination status", add `WHERE vacina_cov IN (1, 2)` to both numerator and denominator.
+
+**UI Label**: `% de casos com registro de vacinação — vacina_cov=1 ÷ casos (todos os casos no período)`
+
+---
+
+#### 5. Taxa de vacinação completa (Full Vaccination Rate)
+
+**Definition**: Percentage of cases that received 2 or more COVID-19 vaccine doses.
+
+**Formula**:
+```
+Taxa = (casos_com_2+_doses / total_casos_no_período) * 100
+```
+
+**Fields Used**:
+- `DOSE_2_COV` (2nd dose date) - `1` if date exists
+- `DOSE_REF` (Booster dose date) - `1` if date exists
+- `DOSE_2REF` (2nd booster dose date) - `1` if date exists
+- `DT_SIN_PRI` (Date of first symptoms) - For period filtering
+
+**Calculation**:
+```sql
+SELECT
+  COUNT(*) FILTER (WHERE (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1)) AS fully_vaccinated,
+  COUNT(*) AS total_cases,
+  (COUNT(*) FILTER (WHERE (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1))::float / COUNT(*)) * 100 AS full_vaccination_rate
+FROM srag_cases
+WHERE dt_sin_pri IS NOT NULL
+  AND dt_sin_pri >= CURRENT_DATE - INTERVAL '30 days'
+```
+
+**Denominator**: **All cases** in the period with a symptom date
+
+**Rationale**:
+- A person is considered "fully vaccinated" if they received:
+  - 2nd dose (`DOSE_2_COV`), OR
+  - Booster dose (`DOSE_REF`), OR
+  - 2nd booster dose (`DOSE_2REF`)
+- Anyone with booster doses is automatically ≥2 doses
+- Missing dose data is treated as unvaccinated
+
+**UI Label**: `% de casos "2+ doses" — (dose_2_cov=1 OR dose_ref=1 OR dose_2ref=1) ÷ todos os casos no período`
+
+---
+
+### Important Notes on Denominators
+
+The choice of denominator is critical for interpreting metrics correctly:
+
+| Metric | Denominator | Why? |
+|--------|-------------|------|
+| Case Increase Rate | Cases in **previous period** | To measure percentage change |
+| Mortality Rate | Cases with **known outcome** only | Pending cases would dilute the rate |
+| ICU Occupancy | **Hospitalized cases** only | ICU admission only applies to hospitalized patients |
+| Vaccination Rate | **All cases** in period | Missing vaccination data = unvaccinated (conservative) |
+| Full Vaccination Rate | **All cases** in period | Conservative estimate of immunization coverage |
+
+**Transparency**: All metric calculations use parameterized SQL queries visible in [backend/tools/metrics_tool.py](backend/tools/metrics_tool.py). No LLM-generated SQL is used in production.
 
 ## API Documentation
 
