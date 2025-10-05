@@ -7,7 +7,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-00a393.svg)](https://fastapi.tiangolo.com/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-1.40+-FF4B4B.svg)](https://streamlit.io/)
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Overview](#overview)
 - [Architecture](#architecture)
@@ -22,7 +22,7 @@
 - [Project Structure](#project-structure)
 - [License](#license)
 
-## 🚀 Overview
+## Overview
 
 This project implements an AI-powered analytics system for SRAG (Síndrome Respiratória Aguda Grave) data from Open DATASUS. It uses **LangGraph agents** to orchestrate:
 
@@ -43,7 +43,7 @@ This project implements an AI-powered analytics system for SRAG (Síndrome Respi
 - Daily cases (last 30 days)
 - Monthly cases (last 12 months)
 
-## 🏗️ Architecture
+## Architecture
 
 The system follows a **microservices architecture** with:
 
@@ -153,11 +153,12 @@ Each node receives the current state, performs its operations, updates the state
 
 The system includes `sql_tool.py` - a safe SQL query tool designed for future user-driven data exploration features. Currently **not used in production** for security and reliability. See [SQL Tool Implementation Guide](docs/SQL_TOOL_IMPLEMENTATION_GUIDE.md) for details on enabling natural language database queries.
 
-## 📦 Prerequisites
+## Prerequisites
 
 Before starting, ensure you have:
 
 - **Python 3.11+** - [Download here](https://www.python.org/downloads/)
+- **uv** - Fast Python package manager - [Install guide](https://docs.astral.sh/uv/getting-started/installation/)
 - **Docker & Docker Compose** - [Install Docker Desktop](https://www.docker.com/products/docker-desktop)
 - **OpenAI API key** - [Get from OpenAI Platform](https://platform.openai.com/api-keys)
 - **Tavily API key** - [Register at Tavily](https://tavily.com)
@@ -171,29 +172,38 @@ Before starting, ensure you have:
 git clone <your-repo-url>
 cd srag-analytics
 
-# 2. Configure API keys
+# 2. Install uv (if not already installed)
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Windows
+powershell -c "irm https://astral.sh/uv/install.ps1 | iex"
+
+# 3. Configure API keys
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY and TAVILY_API_KEY
 
-# 3. Start Docker services
+# 4. Start Docker services (backend + PostgreSQL)
 docker-compose up -d
 
-# 4. Install Python dependencies
-pip install -e .
+# 5. Install Python dependencies with uv
+uv sync
 
-# 5. Download all data from https://opendatasus.saude.gov.br/dataset/srag-2021-a-2024 and the PDF dictionary and put inside the /data folder
+# 6. Download all data from https://opendatasus.saude.gov.br/dataset/srag-2021-a-2024 and the PDF dictionary and put inside the /data folder
 
-# 6. Ingest SRAG data (takes 5-10 minutes)
-python -m backend.db.ingestion
+# 7. Ingest SRAG data (runs inside Docker container, takes 5-10 minutes)
+docker-compose exec backend python -m backend.db.ingestion
 
 # (optional) Parser for the future SQL generator agent
-python -m backend.db.dictionary_parser
+docker-compose exec backend python -m backend.db.dictionary_parser
 
-# 7. Launch Streamlit frontend
-streamlit run frontend/app.py
+# 8. Launch Streamlit frontend (runs outside container with uv)
+uv run streamlit run frontend/app.py
 ```
 
 Open [http://localhost:8501](http://localhost:8501) to access the dashboard.
+
+**Note**: The frontend (Streamlit) runs on your local machine using `uv`, while the backend and database run in Docker containers.
 
 ### Detailed Setup
 
@@ -201,7 +211,7 @@ For step-by-step instructions with troubleshooting, see:
 - **Quick Start**: [QUICKSTART.md](QUICKSTART.md) - Get running in under 10 minutes
 - **Complete Setup**: [SETUP_INSTRUCTIONS.md](SETUP_INSTRUCTIONS.md) - Detailed installation guide
 
-## ⚙️ Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -245,7 +255,7 @@ The system creates:
 - `daily_metrics` - Materialized view for daily aggregates
 - `monthly_metrics` - Materialized view for monthly aggregates
 
-## 📖 Usage
+## Usage
 
 ### Generating Reports
 
@@ -311,7 +321,7 @@ Interactive API documentation is available at:
 
 The API follows RESTful conventions and returns JSON responses.
 
-## 🔒 Governance & Security
+## Governance & Security
 
 ### Safety Guardrails
 
@@ -363,7 +373,7 @@ The system implements multiple layers of safety and governance:
 - Input validation and sanitization
 - HTTPS/TLS for production deployments
 
-## 🛠️ Development
+## Development
 
 ### Project Structure
 
@@ -385,7 +395,7 @@ srag-analytics/
 │   │   └── dictionary_parser.py # PDF parsing
 │   └── main.py          # FastAPI application
 ├── frontend/
-│   └── app.py           # Streamlit UI
+│   └── app.py           # Streamlit UI (runs with uv)
 ├── data/                # SRAG CSV files
 ├── docs/                # Documentation
 │   ├── architecture_diagram.pdf
@@ -394,7 +404,8 @@ srag-analytics/
 ├── logs/                # Execution logs (auto-generated)
 ├── docker-compose.yml   # Docker orchestration
 ├── Dockerfile.backend   # Backend container
-└── pyproject.toml       # Python dependencies
+├── pyproject.toml       # Python dependencies
+└── uv.lock              # Lockfile for reproducible builds
 ```
 
 ### Adding New Features
@@ -422,9 +433,6 @@ srag-analytics/
 ### Testing
 
 ```bash
-# Run backend tests
-pytest tests/
-
 # Test specific endpoint
 curl -X POST http://localhost:8000/generate_report \
   -H "Content-Type: application/json" \
@@ -445,13 +453,13 @@ For production deployment:
 5. **Logging**: Centralize logs (ELK stack, CloudWatch, etc.)
 6. **Security**: Enable HTTPS, add authentication, rate limiting
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE) file for details.
 
 ---
 
-## 📊 Additional Resources
+## Additional Resources
 
 - **Architecture Diagram**: [docs/architecture_diagram.pdf](docs/architecture_diagram.pdf)
 - **Workflow Graph**: [docs/workflow_graph.png](docs/workflow_graph.png)
