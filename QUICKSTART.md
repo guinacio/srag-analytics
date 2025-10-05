@@ -65,7 +65,7 @@ docker-compose exec backend python -m backend.db.ingestion
 docker-compose exec backend python -m backend.db.dictionary_parser
 ```
 
-**This will take 5-10 minutes** (165k rows being processed)
+**This will take 5-10 minutes** (Thousands of rows being processed)
 
 ### Step 5: Launch Frontend
 
