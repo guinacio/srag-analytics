@@ -163,7 +163,7 @@ Before starting, ensure you have:
 - **OpenAI API key** - [Get from OpenAI Platform](https://platform.openai.com/api-keys)
 - **Tavily API key** - [Register at Tavily](https://tavily.com)
 
-## 🚀 Installation
+## Installation
 
 ### Quick Start (5 minutes)
 
@@ -313,7 +313,7 @@ curl -X POST http://localhost:8000/generate_report \
    - Vaccinated cases as percentage of total
    - Formula: `vaccinated_cases / total_cases * 100`
 
-## 📚 API Documentation
+## API Documentation
 
 Interactive API documentation is available at:
 - **Swagger UI**: [http://localhost:8000/docs](http://localhost:8000/docs)
