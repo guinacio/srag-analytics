@@ -5,9 +5,12 @@ from datetime import datetime
 import json
 from pathlib import Path
 import time
+import uuid
 
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg import Connection
+from psycopg.rows import dict_row
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from operator import add
@@ -58,6 +61,20 @@ class SRAGReportAgent:
             openai_api_key=settings.openai_api_key,
         )
 
+        # Initialize PostgreSQL connection and checkpointer for persistence
+        try:
+            self.db_conn = Connection.connect(
+                settings.langgraph_checkpoint_url,
+                autocommit=True,
+                prepare_threshold=0,
+                row_factory=dict_row
+            )
+            self.checkpointer = PostgresSaver(self.db_conn)
+            self.checkpointer.setup()
+            logger.info("PostgreSQL checkpointer initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to setup checkpointer (may already exist): {e}")
+
         # Build the state graph
         self.graph = self._build_graph()
 
@@ -82,7 +99,7 @@ class SRAGReportAgent:
         workflow.add_edge("write_report", "create_audit")
         workflow.add_edge("create_audit", END)
 
-        return workflow.compile()
+        return workflow.compile(checkpointer=self.checkpointer)
 
     def calculate_metrics_node(self, state: ReportState) -> ReportState:
         """Calculate all 4 required SRAG metrics."""
@@ -267,6 +284,7 @@ class SRAGReportAgent:
         user_request: Optional[str] = None,
         days: int = 30,
         state_filter: Optional[str] = None,
+        thread_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate SRAG report.
@@ -275,11 +293,12 @@ class SRAGReportAgent:
             user_request: Optional custom request
             days: Number of days to analyze
             state_filter: Optional state filter (UF)
+            thread_id: Optional thread ID for checkpointing (enables conversation persistence)
 
         Returns:
             Complete report with metrics, charts, news, and audit trail
         """
-        logger.info(f"Generating SRAG report (days={days}, state={state_filter})")
+        logger.info(f"Generating SRAG report (days={days}, state={state_filter}, thread_id={thread_id})")
 
         start_time = time.time()
 
@@ -301,10 +320,17 @@ class SRAGReportAgent:
             "iteration_count": 0,
         }
 
-        # Execute graph with fresh invocation
-        # Note: invoke() should not maintain state between calls, but we ensure
-        # initial_state is completely fresh for each request
-        final_state = self.graph.invoke(initial_state, {"recursion_limit": 50})
+        # Configure checkpointing with thread_id (auto-generate if not provided)
+        if not thread_id:
+            thread_id = str(uuid.uuid4())
+
+        config = {
+            "recursion_limit": 50,
+            "configurable": {"thread_id": thread_id}
+        }
+
+        # Execute graph with checkpointing support
+        final_state = self.graph.invoke(initial_state, config)
 
         execution_time_ms = int((time.time() - start_time) * 1000)
 

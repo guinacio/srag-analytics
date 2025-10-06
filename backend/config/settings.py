@@ -59,6 +59,14 @@ class Settings(BaseSettings):
         """Get async database URL."""
         return self.database_url.replace("postgresql+psycopg://", "postgresql+psycopg://")
 
+    @property
+    def langgraph_checkpoint_url(self) -> str:
+        """Get PostgreSQL connection string for LangGraph checkpointer."""
+        return (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+
 
 # Global settings instance
 settings = Settings()
