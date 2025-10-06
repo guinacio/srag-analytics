@@ -146,6 +146,7 @@ class DailyMetrics(Base):
     new_cases = Column(Integer, default=0)
     total_deaths = Column(Integer, default=0)
     new_deaths = Column(Integer, default=0)
+    cases_with_outcome = Column(Integer, default=0)  # Cases with evolucao IN (1,2) - for accurate mortality rate
     icu_admissions = Column(Integer, default=0)
     vaccinated_cases = Column(Integer, default=0)
 

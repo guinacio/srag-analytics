@@ -89,9 +89,10 @@ class MetricsTool:
         state: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Calculate mortality rate (deaths / total cases).
+        Calculate mortality rate (deaths / cases with known outcome).
 
-        Uses daily_metrics table with state filtering for fast queries.
+        Uses daily_metrics table with cases_with_outcome column for accurate calculation.
+        Only includes cases where evolucao IN (1=recovery, 2=death), excluding pending cases.
 
         Args:
             days: If specified, calculate for last N days only
@@ -99,7 +100,7 @@ class MetricsTool:
 
         Returns:
             {
-                'total_cases': int,
+                'total_cases': int (cases with outcome only - denominator),
                 'total_deaths': int,
                 'mortality_rate': float (percentage),
                 'period_days': int or None,
@@ -125,10 +126,10 @@ class MetricsTool:
                 
             query = text(f"""
                 SELECT
-                    COALESCE(SUM(new_cases), 0) as total_cases,
+                    COALESCE(SUM(cases_with_outcome), 0) as total_cases,
                     COALESCE(SUM(new_deaths), 0) as total_deaths,
                     CASE
-                        WHEN SUM(new_cases) > 0 THEN (SUM(new_deaths)::float / SUM(new_cases) * 100)
+                        WHEN SUM(cases_with_outcome) > 0 THEN (SUM(new_deaths)::float / SUM(cases_with_outcome) * 100)
                         ELSE 0
                     END as mortality_rate
                 FROM daily_metrics

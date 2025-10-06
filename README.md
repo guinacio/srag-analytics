@@ -340,23 +340,28 @@ Taxa = (óbitos / casos_com_evolução_registrada) * 100
   - `9` = Ignorado (Unknown)
 - `DT_SIN_PRI` (Date of first symptoms) - For period filtering
 
-**Calculation**:
+**Calculation** (from pre-computed `daily_metrics` table):
 ```sql
 SELECT
-  COUNT(*) FILTER (WHERE evolucao = 2) AS deaths,
-  COUNT(*) FILTER (WHERE evolucao IN (1, 2)) AS cases_with_outcome,
-  (COUNT(*) FILTER (WHERE evolucao = 2)::float /
-   COUNT(*) FILTER (WHERE evolucao IN (1, 2))) * 100 AS mortality_rate
-FROM srag_cases
-WHERE evolucao IN (1, 2)  -- Only cases with known outcome
-  AND dt_sin_pri >= CURRENT_DATE - INTERVAL '30 days'
+  SUM(new_deaths) AS total_deaths,
+  SUM(cases_with_outcome) AS total_cases_with_outcome,
+  (SUM(new_deaths)::float / SUM(cases_with_outcome)) * 100 AS mortality_rate
+FROM daily_metrics
+WHERE metric_date >= CURRENT_DATE - INTERVAL '30 days'
+  AND state IS NULL  -- National totals (or filter by state)
+```
+
+Where `daily_metrics.cases_with_outcome` is pre-computed as:
+```sql
+-- During ingestion
+SUM(CASE WHEN evolucao IN (1, 2) THEN 1 ELSE 0 END) AS cases_with_outcome
 ```
 
 **Denominator**: Cases with recorded outcome (`EVOLUCAO IN (1, 2)`) — **not all cases in the period**
 
-**Rationale**: Using all cases (including those still hospitalized) would artificially lower the mortality rate. We only include cases with a final outcome (recovery or death).
+**Rationale**: Using all cases (including those still hospitalized or with unknown outcomes) would artificially lower the mortality rate. We only include cases with a final outcome (recovery or death) excluding unknown outcomes.
 
-**UI Label**: `Taxa de mortalidade (entre casos do período) — óbitos (evolucao=2) ÷ casos com evolucao preenchida`
+**UI Label**: `Taxa de mortalidade — óbitos (evolucao=2) ÷ casos com evolucao IN (1,2)`
 
 ---
 
@@ -446,17 +451,17 @@ Taxa = (casos_com_2+_doses / total_casos_no_período) * 100
 ```
 
 **Fields Used**:
-- `DOSE_2_COV` (2nd dose date) - `1` if date exists
-- `DOSE_REF` (Booster dose date) - `1` if date exists
-- `DOSE_2REF` (2nd booster dose date) - `1` if date exists
+- `DOSE_2_COV` (2nd dose date) - **DATE** field, not NULL if vaccinated
+- `DOSE_REF` (Booster dose date) - **DATE** field, not NULL if vaccinated
+- `DOSE_2REF` (2nd booster dose date) - **DATE** field, not NULL if vaccinated
 - `DT_SIN_PRI` (Date of first symptoms) - For period filtering
 
 **Calculation**:
 ```sql
 SELECT
-  COUNT(*) FILTER (WHERE (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1)) AS fully_vaccinated,
+  COUNT(*) FILTER (WHERE (dose_2_cov IS NOT NULL OR dose_ref IS NOT NULL OR dose_2ref IS NOT NULL)) AS fully_vaccinated,
   COUNT(*) AS total_cases,
-  (COUNT(*) FILTER (WHERE (dose_2_cov = 1 OR dose_ref = 1 OR dose_2ref = 1))::float / COUNT(*)) * 100 AS full_vaccination_rate
+  (COUNT(*) FILTER (WHERE (dose_2_cov IS NOT NULL OR dose_ref IS NOT NULL OR dose_2ref IS NOT NULL))::float / COUNT(*)) * 100 AS full_vaccination_rate
 FROM srag_cases
 WHERE dt_sin_pri IS NOT NULL
   AND dt_sin_pri >= CURRENT_DATE - INTERVAL '30 days'
@@ -465,14 +470,14 @@ WHERE dt_sin_pri IS NOT NULL
 **Denominator**: **All cases** in the period with a symptom date
 
 **Rationale**:
-- A person is considered "fully vaccinated" if they received:
-  - 2nd dose (`DOSE_2_COV`), OR
-  - Booster dose (`DOSE_REF`), OR
-  - 2nd booster dose (`DOSE_2REF`)
+- A person is considered "fully vaccinated" if they have a recorded date for:
+  - 2nd dose (`DOSE_2_COV IS NOT NULL`), OR
+  - Booster dose (`DOSE_REF IS NOT NULL`), OR
+  - 2nd booster dose (`DOSE_2REF IS NOT NULL`)
 - Anyone with booster doses is automatically ≥2 doses
-- Missing dose data is treated as unvaccinated
+- Missing dose dates (NULL values) are treated as unvaccinated
 
-**UI Label**: `% de casos "2+ doses" — (dose_2_cov=1 OR dose_ref=1 OR dose_2ref=1) ÷ todos os casos no período`
+**UI Label**: `% de casos "2+ doses" — (dose_2_cov IS NOT NULL OR dose_ref IS NOT NULL OR dose_2ref IS NOT NULL) ÷ todos os casos no período`
 
 ---
 
@@ -483,8 +488,8 @@ The choice of denominator is critical for interpreting metrics correctly:
 | Metric | Denominator | Why? |
 |--------|-------------|------|
 | Case Increase Rate | Cases in **previous period** | To measure percentage change |
-| Mortality Rate | Cases with **known outcome** only | Pending cases would dilute the rate |
-| ICU Occupancy | **Hospitalized cases** only | ICU admission only applies to hospitalized patients |
+| Mortality Rate | Cases with **known outcome** (`evolucao IN (1,2)`) | Pending/unknown cases would dilute the rate |
+| ICU Occupancy | **Hospitalized cases** only (`hospital=1`) | ICU admission only applies to hospitalized patients |
 | Vaccination Rate | **All cases** in period | Missing vaccination data = unvaccinated (conservative) |
 | Full Vaccination Rate | **All cases** in period | Conservative estimate of immunization coverage |
 

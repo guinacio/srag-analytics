@@ -179,6 +179,7 @@ def compute_daily_metrics() -> None:
                     dt_sin_pri::date AS metric_date,
                     COUNT(*) AS daily_cases,
                     SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) AS daily_deaths,
+                    SUM(CASE WHEN evolucao IN (1, 2) THEN 1 ELSE 0 END) AS daily_cases_with_outcome,
                     SUM(CASE WHEN uti = 1 THEN 1 ELSE 0 END) AS daily_icu_adm,
                     SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) AS daily_vaccinated
                 FROM srag_cases
@@ -193,12 +194,13 @@ def compute_daily_metrics() -> None:
                     daily_cases AS new_cases,
                     SUM(daily_deaths) OVER (ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_deaths,
                     daily_deaths AS new_deaths,
+                    daily_cases_with_outcome AS cases_with_outcome,
                     daily_icu_adm AS icu_admissions,
                     daily_vaccinated AS vaccinated_cases
                 FROM daily_base
             )
             INSERT INTO daily_metrics 
-                (metric_date, state, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
+                (metric_date, state, total_cases, new_cases, total_deaths, new_deaths, cases_with_outcome, icu_admissions, vaccinated_cases)
             SELECT
                 metric_date,
                 state,
@@ -206,6 +208,7 @@ def compute_daily_metrics() -> None:
                 new_cases,
                 total_deaths,
                 new_deaths,
+                cases_with_outcome,
                 icu_admissions,
                 vaccinated_cases
             FROM cumulative
@@ -222,6 +225,7 @@ def compute_daily_metrics() -> None:
                     sg_uf_not AS state,
                     COUNT(*) AS daily_cases,
                     SUM(CASE WHEN evolucao = 2 THEN 1 ELSE 0 END) AS daily_deaths,
+                    SUM(CASE WHEN evolucao IN (1, 2) THEN 1 ELSE 0 END) AS daily_cases_with_outcome,
                     SUM(CASE WHEN uti = 1 THEN 1 ELSE 0 END) AS daily_icu_adm,
                     SUM(CASE WHEN vacina_cov = 1 THEN 1 ELSE 0 END) AS daily_vaccinated
                 FROM srag_cases
@@ -238,12 +242,13 @@ def compute_daily_metrics() -> None:
                     daily_cases AS new_cases,
                     SUM(daily_deaths) OVER (PARTITION BY state ORDER BY metric_date ROWS UNBOUNDED PRECEDING) AS total_deaths,
                     daily_deaths AS new_deaths,
+                    daily_cases_with_outcome AS cases_with_outcome,
                     daily_icu_adm AS icu_admissions,
                     daily_vaccinated AS vaccinated_cases
                 FROM daily_base
             )
             INSERT INTO daily_metrics 
-                (metric_date, state, total_cases, new_cases, total_deaths, new_deaths, icu_admissions, vaccinated_cases)
+                (metric_date, state, total_cases, new_cases, total_deaths, new_deaths, cases_with_outcome, icu_admissions, vaccinated_cases)
             SELECT
                 metric_date,
                 state,
@@ -251,6 +256,7 @@ def compute_daily_metrics() -> None:
                 new_cases,
                 total_deaths,
                 new_deaths,
+                cases_with_outcome,
                 icu_admissions,
                 vaccinated_cases
             FROM cumulative
