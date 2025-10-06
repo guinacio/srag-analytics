@@ -330,7 +330,7 @@ streamlit run frontend/app.py  # Frontend
 | Frontend | Streamlit | 1.40+ |
 | Backend | FastAPI | 0.115+ |
 | Agent Framework | LangGraph | 0.6.8 |
-| LLM | OpenAI GPT-4o | Latest |
+| LLM | OpenAI GPT-4o / 5 | Latest |
 | Database | PostgreSQL | 17 |
 | Vector Store | pgvector | Latest |
 | News API | Tavily | Latest |
