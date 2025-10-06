@@ -37,10 +37,8 @@ logs/
 *.sqlite3
 
 # Data
-data/
-
-# Infra
-infra/
+/data/*
+!data/.gitkeep
 
 # Docker volumes
 postgres_data/
