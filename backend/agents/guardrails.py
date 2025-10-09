@@ -215,3 +215,13 @@ def validate_output(output: str) -> Dict[str, Any]:
 def sanitize_input(user_input: str) -> str:
     """Convenience function to sanitize user input."""
     return Guardrails.sanitize_user_input(user_input)
+
+
+def apply_output_schema(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Convenience function to apply output schema."""
+    return Guardrails.apply_output_schema(data)
+
+
+def log_security_event(event_type: str, details: str):
+    """Convenience function to log security events."""
+    return Guardrails.log_security_event(event_type, details)

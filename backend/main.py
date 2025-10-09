@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from backend.config.settings import settings
 from backend.db.connection import init_db
 from backend.agents.report_agent import report_agent
-from backend.agents.guardrails import sanitize_input, validate_output, scrub_pii
+from backend.agents.guardrails import sanitize_input, validate_output, apply_output_schema, log_security_event
 from backend.tools.metrics_tool import metrics_tool
 from backend.tools.news_tool import news_tool
 from backend.tools.sql_tool import sql_tool
@@ -121,6 +121,10 @@ async def generate_report(request: ReportRequest):
 
         # Sanitize user input
         user_request = sanitize_input(request.user_request) if request.user_request else None
+        
+        # Log if input was sanitized (potential security concern)
+        if request.user_request and user_request != request.user_request:
+            log_security_event("INPUT_SANITIZED", f"User input was sanitized. Original length: {len(request.user_request)}, Sanitized length: {len(user_request)}")
 
         # Generate report using agent
         result = report_agent.generate_report(
@@ -134,10 +138,17 @@ async def generate_report(request: ReportRequest):
             validation = validate_output(result["report"])
             if not validation["valid"]:
                 logger.warning(f"Output validation issues: {validation['issues']}")
+                # Log security event for PII detection
+                if "Output contains potential PII" in validation["issues"]:
+                    log_security_event("PII_DETECTED", f"PII detected in report output for request: {request.user_request[:100] if request.user_request else 'No user request'}")
             result["report"] = validation["scrubbed_output"]
+
+        # Apply output schema validation
+        result = apply_output_schema(result)
 
         # Check for errors
         if result.get("error"):
+            log_security_event("REPORT_ERROR", f"Report generation failed: {result['error']}")
             raise HTTPException(status_code=500, detail=result["error"])
 
         return ReportResponse(
@@ -150,6 +161,7 @@ async def generate_report(request: ReportRequest):
 
     except Exception as e:
         logger.error(f"Report generation error: {e}")
+        log_security_event("SYSTEM_ERROR", f"Report generation system error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -169,6 +181,7 @@ async def get_metrics(request: MetricsRequest):
 
     except Exception as e:
         logger.error(f"Metrics calculation error: {e}")
+        log_security_event("METRICS_ERROR", f"Metrics calculation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -195,6 +208,7 @@ async def search_news(request: NewsRequest):
 
     except Exception as e:
         logger.error(f"News search error: {e}")
+        log_security_event("NEWS_ERROR", f"News search failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -208,6 +222,7 @@ async def get_daily_chart_data(days: int = Query(30, ge=1, le=365)):
 
     except Exception as e:
         logger.error(f"Chart data error: {e}")
+        log_security_event("CHART_ERROR", f"Daily chart data generation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -220,6 +235,7 @@ async def get_monthly_chart_data(months: int = Query(12, ge=1, le=36)):
 
     except Exception as e:
         logger.error(f"Chart data error: {e}")
+        log_security_event("CHART_ERROR", f"Monthly chart data generation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -233,6 +249,7 @@ async def explain_field(request: ExplainFieldRequest):
 
     except Exception as e:
         logger.error(f"Field explanation error: {e}")
+        log_security_event("RAG_ERROR", f"Field explanation failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -245,6 +262,7 @@ async def search_dictionary(query: str = Query(..., min_length=2)):
 
     except Exception as e:
         logger.error(f"Dictionary search error: {e}")
+        log_security_event("RAG_ERROR", f"Dictionary search failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -257,6 +275,7 @@ async def list_fields():
 
     except Exception as e:
         logger.error(f"List fields error: {e}")
+        log_security_event("RAG_ERROR", f"List fields failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -270,6 +289,7 @@ async def list_tables():
 
     except Exception as e:
         logger.error(f"List tables error: {e}")
+        log_security_event("SQL_ERROR", f"List tables failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -282,6 +302,7 @@ async def get_table_schema(table_name: str):
 
     except Exception as e:
         logger.error(f"Get schema error: {e}")
+        log_security_event("SQL_ERROR", f"Get schema failed for table {table_name}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
