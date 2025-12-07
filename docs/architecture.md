@@ -39,12 +39,15 @@
 |  +----------------------------------------------------+            |
 |  |          Main Orchestrator Agent (Supervisor)        |            |
 |  |                                                      |            |
-|  |  State Graph:                                        |            |
-|  |  1. Calculate Metrics                              |            |
-|  |  2. Fetch News Context                             |            |
-|  |  3. Generate Charts                                |            |
-|  |  4. Write Report (LLM)                            |            |
-|  |  5. Create Audit Trail                            |            |
+|  |  State Graph (Fan-out/Fan-in Pattern):              |            |
+|  |                                                      |            |
+|  |  START ──┬── 1. Calculate Metrics ──┐               |            |
+|  |          │                          │               |            |
+|  |          ├── 2. Fetch News ─────────┼─→ 4. Write   |            |
+|  |          │      (PARALLEL)          │     Report   |            |
+|  |          └── 3. Generate Charts ────┘       │       |            |
+|  |                                             ▼       |            |
+|  |                                      5. Create Audit |            |
 |  +----------------------------------------------------+            |
 |                                                                      |
 |           |          |          |          |                        |
@@ -103,27 +106,42 @@
 #### Main Orchestrator Agent
 
 - **Framework**: LangGraph 0.6.8
-- **Pattern**: Supervisor with state graph
+- **Pattern**: Supervisor with state graph + **Fan-out/Fan-in parallel execution**
 - **Nodes**:
-  1. **Calculate Metrics Node**
+
+  **Parallel Phase (Fan-out from START):**
+  1. **Calculate Metrics Node** ⚡ PARALLEL
      - Calls metrics tool
      - Computes 4 required metrics
-  2. **Fetch News Node**
+  2. **Fetch News Node** ⚡ PARALLEL
      - Calls Tavily Search
      - Retrieves recent SRAG news
-  3. **Generate Charts Node**
+  3. **Generate Charts Node** ⚡ PARALLEL
      - Queries daily/monthly aggregates
      - Formats for Plotly
-  4. **Write Report Node**
+
+  **Sequential Phase (Fan-in):**
+  4. **Write Report Node** ← Fan-in point
+     - Waits for all 3 parallel nodes to complete
      - Uses GPT-4o to synthesize report
-     - Combines metrics + news context
+     - Combines metrics + news context + charts
   5. **Create Audit Node**
      - Logs all operations
      - Creates JSON audit trail
 
+- **Execution Pattern**:
+  ```
+  START ──┬── calculate_metrics ──┐
+          ├── fetch_news ─────────┼── write_report ── create_audit ── END
+          └── generate_charts ────┘
+  ```
+
+- **Performance**: Parallel execution reduces total latency from ~sum(node times) to ~max(node times) for the data gathering phase
+
 - **Features**:
   - Checkpointer for persistence
-  - State management
+  - State management with LangGraph reducers
+  - Automatic state merging at fan-in point
   - Error handling
 
 ### 4. Tools Layer
@@ -227,37 +245,70 @@
 
 ```
 1. User clicks "Generate Report" in Streamlit
-   “
-2. POST /report ’ FastAPI endpoint
-   “
+   │
+   ▼
+2. POST /report → FastAPI endpoint
+   │
+   ▼
 3. LangGraph orchestrator invoked
-   “
-4. Parallel execution:
-   - Metrics Tool ’ PostgreSQL (SELECT queries)
-   - News Tool ’ Tavily API
-   - RAG Tool ’ pgvector search
-   “
-5. LLM synthesis (GPT-4o)
-   - Combines metrics + news
-   - Generates narrative
-   “
-6. Audit trail creation
+   │
+   ▼
+4. ┌─────────────────────────────────────────────────────────┐
+   │           PARALLEL EXECUTION (Fan-out)                  │
+   │                                                         │
+   │  ┌──────────────────┐  ┌──────────────┐  ┌───────────┐ │
+   │  │ calculate_metrics│  │  fetch_news  │  │ generate_ │ │
+   │  │                  │  │              │  │  charts   │ │
+   │  │ • Metrics Tool   │  │ • Tavily API │  │ • Daily   │ │
+   │  │ • PostgreSQL     │  │ • Brazilian  │  │   data    │ │
+   │  │ • 4 KPIs         │  │   domains    │  │ • Monthly │ │
+   │  └────────┬─────────┘  └──────┬───────┘  └─────┬─────┘ │
+   │           │                   │                │       │
+   └───────────┼───────────────────┼────────────────┼───────┘
+               │                   │                │
+               ▼                   ▼                ▼
+5. ┌─────────────────────────────────────────────────────────┐
+   │              FAN-IN: write_report                       │
+   │                                                         │
+   │  • LLM synthesis (GPT-4o)                               │
+   │  • Combines metrics + news + charts                     │
+   │  • Generates PT-BR narrative                            │
+   └─────────────────────────────────────────────────────────┘
+   │
+   ▼
+6. create_audit
    - Logs all operations
-   - JSON format
-   “
+   - JSON audit trail
+   - Saves to /logs
+   │
+   ▼
 7. Response to Streamlit
    - Report markdown
    - Metrics JSON
    - Chart data
    - News citations
    - Audit trail
-   “
+   │
+   ▼
 8. Streamlit renders:
    - Formatted report
    - Plotly charts
    - News cards
    - Download buttons
 ```
+
+### Performance Benefits
+
+The parallel execution pattern significantly improves response time:
+
+| Execution Mode | Latency Formula | Example (3s each) |
+|---------------|-----------------|-------------------|
+| Sequential    | sum(T1, T2, T3) | 9 seconds         |
+| **Parallel**  | max(T1, T2, T3) | **3 seconds**     |
+
+This is achieved using LangGraph's fan-out/fan-in pattern where:
+- **Fan-out**: `START` creates edges to all 3 parallel nodes
+- **Fan-in**: All 3 nodes converge to `write_report` which waits for all to complete
 
 ## Security & Governance
 
@@ -338,6 +389,10 @@ streamlit run frontend/app.py  # Frontend
 
 ---
 
-**Document Version**: 1.0
-**Date**: 2025-10-04
+**Document Version**: 1.1
+**Date**: 2025-12-07
 **Author**: Guilherme Inácio
+
+**Changelog**:
+- v1.1 (2025-12-07): Updated workflow to parallel fan-out/fan-in execution pattern for improved performance
+- v1.0 (2025-10-04): Initial architecture documentation

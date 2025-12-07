@@ -1,13 +1,13 @@
 """LangGraph Report Generation Agent with supervisor pattern."""
 import logging
-from typing import TypedDict, Annotated, Sequence, Dict, Any, Optional
+from typing import TypedDict, Annotated, Sequence, Dict, Any, Optional, List
 from datetime import datetime
 import json
 from pathlib import Path
 import time
 import uuid
 
-from langgraph.graph import StateGraph, END
+from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.postgres import PostgresSaver
 from psycopg import Connection
 from psycopg.rows import dict_row
@@ -25,21 +25,61 @@ from backend.agents.prompts import prompts
 logger = logging.getLogger(__name__)
 
 
+# Custom reducers for parallel state updates
+def keep_first(existing: Any, new: Any) -> Any:
+    """Reducer that keeps the first non-None value (for read-only fields)."""
+    if existing is not None:
+        return existing
+    return new
+
+
+def keep_latest(existing: Any, new: Any) -> Any:
+    """Reducer that keeps the latest non-None value."""
+    if new is not None:
+        return new
+    return existing
+
+
+def merge_dicts(existing: Optional[Dict], new: Optional[Dict]) -> Optional[Dict]:
+    """Reducer that merges dictionaries (for parallel updates to different keys)."""
+    if existing is None:
+        return new
+    if new is None:
+        return existing
+    return {**existing, **new}
+
+
+def merge_lists(existing: Optional[List], new: Optional[List]) -> Optional[List]:
+    """Reducer that concatenates lists."""
+    if existing is None:
+        return new
+    if new is None:
+        return existing
+    return existing + new
+
+
 # State definition for the agent graph
 class ReportState(TypedDict):
-    """State passed between agent nodes."""
+    """State passed between agent nodes.
+    
+    Uses Annotated types with reducers to support parallel node execution.
+    The fan-out/fan-in pattern requires reducers for proper state merging.
+    """
     messages: Annotated[Sequence[BaseMessage], add]
-    days: int  # Number of days to analyze
-    state_filter: Optional[str]  # State filter (UF)
-    metrics: Optional[Dict[str, Any]]
-    news_context: Optional[str]
-    news_citations: Optional[list]
-    sql_queries: Optional[list]
-    chart_data: Optional[Dict[str, Any]]
-    final_report: Optional[str]
-    audit_trail: Optional[Dict[str, Any]]
-    error: Optional[str]
-    iteration_count: int
+    # Read-only config fields - keep first value set at initialization
+    days: Annotated[int, keep_first]
+    state_filter: Annotated[Optional[str], keep_first]
+    iteration_count: Annotated[int, keep_first]
+    # Data fields updated by parallel nodes - merge/keep latest
+    metrics: Annotated[Optional[Dict[str, Any]], merge_dicts]
+    news_context: Annotated[Optional[str], keep_latest]
+    news_citations: Annotated[Optional[list], merge_lists]
+    sql_queries: Annotated[Optional[list], merge_lists]
+    chart_data: Annotated[Optional[Dict[str, Any]], merge_dicts]
+    # Sequential node fields - keep latest
+    final_report: Annotated[Optional[str], keep_latest]
+    audit_trail: Annotated[Optional[Dict[str, Any]], keep_latest]
+    error: Annotated[Optional[str], keep_latest]
 
 
 class SRAGReportAgent:
@@ -90,56 +130,62 @@ class SRAGReportAgent:
         workflow.add_node("create_audit", self.create_audit_node)
 
         # Define edges (execution flow)
-        workflow.set_entry_point("calculate_metrics")
+        # Fan-out: START branches to 3 parallel nodes for concurrent execution
+        workflow.add_edge(START, "calculate_metrics")
+        workflow.add_edge(START, "fetch_news")
+        workflow.add_edge(START, "generate_charts")
 
-        # After metrics, fetch news and generate charts in parallel
-        workflow.add_edge("calculate_metrics", "fetch_news")
-        workflow.add_edge("fetch_news", "generate_charts")
+        # Fan-in: all 3 parallel nodes converge to write_report
+        workflow.add_edge("calculate_metrics", "write_report")
+        workflow.add_edge("fetch_news", "write_report")
         workflow.add_edge("generate_charts", "write_report")
+
+        # Sequential: report writing followed by audit
         workflow.add_edge("write_report", "create_audit")
         workflow.add_edge("create_audit", END)
 
         return workflow.compile(checkpointer=self.checkpointer)
 
-    def calculate_metrics_node(self, state: ReportState) -> ReportState:
-        """Calculate all 4 required SRAG metrics."""
+    def calculate_metrics_node(self, state: ReportState) -> Dict[str, Any]:
+        """Calculate all 4 required SRAG metrics.
+        
+        Returns only the fields this node updates (for parallel execution support).
+        """
         days = state.get("days", 30)
         state_filter = state.get("state_filter")
         logger.info(f"Node: Calculating metrics (days={days}, state={state_filter})")
-        logger.info(f"DEBUG: Current messages count: {len(state.get('messages', []))}")
 
         try:
             # Calculate all metrics using state parameters
             metrics = metrics_tool.calculate_all_metrics(days=days, state=state_filter)
 
-            state["metrics"] = metrics
-            state["messages"].append(
-                AIMessage(content=f"Calculated all 4 SRAG metrics for last {days} days{f' in state {state_filter}' if state_filter else ''}")
-            )
-
-            # Log SQL query for audit
-            if "sql_queries" not in state or state["sql_queries"] is None:
-                state["sql_queries"] = []
-
-            state["sql_queries"].append({
-                "operation": "calculate_metrics",
-                "timestamp": datetime.utcnow().isoformat(),
-                "days": days,
-                "state_filter": state_filter,
-                "metrics": list(metrics.keys()),
-            })
+            # Return only the fields we update
+            return {
+                "metrics": metrics,
+                "messages": [
+                    AIMessage(content=f"Calculated all 4 SRAG metrics for last {days} days{f' in state {state_filter}' if state_filter else ''}")
+                ],
+                "sql_queries": [{
+                    "operation": "calculate_metrics",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "days": days,
+                    "state_filter": state_filter,
+                    "metrics": list(metrics.keys()),
+                }],
+            }
 
         except Exception as e:
             logger.error(f"Error calculating metrics: {e}")
-            state["error"] = str(e)
-            state["messages"].append(
-                AIMessage(content=f"Error calculating metrics: {e}")
-            )
+            return {
+                "error": str(e),
+                "messages": [AIMessage(content=f"Error calculating metrics: {e}")],
+            }
 
-        return state
-
-    def fetch_news_node(self, state: ReportState) -> ReportState:
-        """Fetch recent news about SRAG."""
+    def fetch_news_node(self, state: ReportState) -> Dict[str, Any]:
+        """Fetch recent news about SRAG.
+        
+        Returns only the fields this node updates (for parallel execution support).
+        """
         days = state.get("days", 30)
         state_filter = state.get("state_filter")
         logger.info(f"Node: Fetching news (days={days}, state={state_filter})")
@@ -152,24 +198,27 @@ class SRAGReportAgent:
             news_context = news_tool.get_recent_context(days=days, state=state_filter)
             news_citations = news_tool.format_for_citation(articles)
 
-            state["news_context"] = news_context
-            state["news_citations"] = news_citations
-            state["messages"].append(
-                AIMessage(content=f"Fetched {len(articles)} recent news articles about SRAG from last {days} days")
-            )
+            return {
+                "news_context": news_context,
+                "news_citations": news_citations,
+                "messages": [
+                    AIMessage(content=f"Fetched {len(articles)} recent news articles about SRAG from last {days} days")
+                ],
+            }
 
         except Exception as e:
             logger.error(f"Error fetching news: {e}")
-            state["news_context"] = "Error fetching news"
-            state["news_citations"] = []
-            state["messages"].append(
-                AIMessage(content=f"Error fetching news: {e}")
-            )
+            return {
+                "news_context": "Error fetching news",
+                "news_citations": [],
+                "messages": [AIMessage(content=f"Error fetching news: {e}")],
+            }
 
-        return state
-
-    def generate_charts_node(self, state: ReportState) -> ReportState:
-        """Generate chart data for daily and monthly trends."""
+    def generate_charts_node(self, state: ReportState) -> Dict[str, Any]:
+        """Generate chart data for daily and monthly trends.
+        
+        Returns only the fields this node updates (for parallel execution support).
+        """
         days = state.get("days", 30)
         state_filter = state.get("state_filter")
         logger.info(f"Node: Generating charts (days={days}, state={state_filter})")
@@ -181,26 +230,28 @@ class SRAGReportAgent:
             # Get monthly cases (last 12 months)
             monthly_data = metrics_tool.get_monthly_cases_chart_data(months=12, state=state_filter)
 
-            state["chart_data"] = {
-                "daily_30d": daily_data,
-                "monthly_12m": monthly_data,
+            return {
+                "chart_data": {
+                    "daily_30d": daily_data,
+                    "monthly_12m": monthly_data,
+                },
+                "messages": [
+                    AIMessage(content=f"Generated chart data: {len(daily_data)} daily points, {len(monthly_data)} monthly points")
+                ],
             }
-
-            state["messages"].append(
-                AIMessage(content=f"Generated chart data: {len(daily_data)} daily points, {len(monthly_data)} monthly points")
-            )
 
         except Exception as e:
             logger.error(f"Error generating charts: {e}")
-            state["chart_data"] = {"daily_30d": [], "monthly_12m": []}
-            state["messages"].append(
-                AIMessage(content=f"Error generating charts: {e}")
-            )
+            return {
+                "chart_data": {"daily_30d": [], "monthly_12m": []},
+                "messages": [AIMessage(content=f"Error generating charts: {e}")],
+            }
 
-        return state
-
-    def write_report_node(self, state: ReportState) -> ReportState:
-        """Write the final SRAG report with LLM."""
+    def write_report_node(self, state: ReportState) -> Dict[str, Any]:
+        """Write the final SRAG report with LLM.
+        
+        This is the fan-in node that receives merged state from parallel nodes.
+        """
         logger.info("Node: Writing report")
 
         try:
@@ -220,28 +271,26 @@ class SRAGReportAgent:
             response = self.llm.invoke(messages)
             report = response.content
 
-            state["final_report"] = report
-            state["messages"].append(
-                AIMessage(content="Report generated successfully")
-            )
+            return {
+                "final_report": report,
+                "messages": [AIMessage(content="Report generated successfully")],
+            }
 
         except Exception as e:
             logger.error(f"Error writing report: {e}")
-            state["final_report"] = f"Erro ao gerar relatório: {e}"
-            state["error"] = str(e)
-            state["messages"].append(
-                AIMessage(content=f"Error writing report: {e}")
-            )
+            return {
+                "final_report": f"Erro ao gerar relatório: {e}",
+                "error": str(e),
+                "messages": [AIMessage(content=f"Error writing report: {e}")],
+            }
 
-        return state
-
-    def create_audit_node(self, state: ReportState) -> ReportState:
+    def create_audit_node(self, state: ReportState) -> Dict[str, Any]:
         """Create complete audit trail."""
         logger.info("Node: Creating audit trail")
 
         # Only include messages from the LAST execution to avoid duplicates
         # The first message is always the HumanMessage for this request
-        all_messages = state.get("messages", [])
+        all_messages = list(state.get("messages", []))
 
         # Find the index of the last HumanMessage (start of this execution)
         last_human_idx = 0
@@ -272,12 +321,10 @@ class SRAGReportAgent:
             "error": state.get("error"),
         }
 
-        state["audit_trail"] = audit_trail
-        state["messages"].append(
-            AIMessage(content="Audit trail created")
-        )
-
-        return state
+        return {
+            "audit_trail": audit_trail,
+            "messages": [AIMessage(content="Audit trail created")],
+        }
 
     def generate_report(
         self,

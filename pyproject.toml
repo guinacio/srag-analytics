@@ -39,6 +39,8 @@ dependencies = [
     "httpx>=0.27.0",
     "tenacity>=9.0.0",
     "openai>=2.1.0",
+    "graphviz>=0.21",
+    "matplotlib>=3.10.7",
 ]
 
 [project.optional-dependencies]
