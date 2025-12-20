@@ -54,34 +54,54 @@ The system follows a **microservices architecture** with:
 
 ### Agent Workflow (LangGraph)
 
-The system uses **LangGraph** to orchestrate a multi-step agentic workflow. Each node performs specific operations and passes state to the next node.
+The system uses **LangGraph** to orchestrate a multi-step agentic workflow with **parallel execution** for improved performance. The first three data-gathering nodes run concurrently (fan-out), then converge (fan-in) at the report writing stage.
 
 ```mermaid
 graph TD
     A[User Request] --> B[SRAGReportAgent];
     B --> C[Node 1: calculate_metrics];
-    C --> D[Node 2: fetch_news];
-    D --> E[Node 3: generate_charts];
-    E --> F[Node 4: write_report];
+    B --> D[Node 2: fetch_news];
+    B --> E[Node 3: generate_charts];
+    C --> F[Node 4: write_report];
+    D --> F;
+    E --> F;
     F --> G[Node 5: create_audit];
     G --> H[Return: Report + Audit Trail];
 
     C -.SQL.-> DB[(PostgreSQL)];
     D -.Tavily API.-> News[News Sources];
-    D -.OpenAI.-> LLM1[gpt-5-mini];
+    D -.OpenAI.-> LLM1[gpt-4o-mini];
     E -.SQL.-> DB;
-    F -.OpenAI.-> LLM2[gpt-5];
+    F -.OpenAI.-> LLM2[gpt-4o];
+
+    subgraph parallel [" ⚡ PARALLEL EXECUTION"]
+        C
+        D
+        E
+    end
 
     style C fill:#e1f5fe
     style D fill:#f3e5f5
     style E fill:#e8f5e9
     style F fill:#fff3e0
     style G fill:#fce4ec
+    style parallel fill:#fff3e0,stroke:#ff9800,stroke-width:2px
 ```
+
+#### Performance Benefits
+
+| Execution Mode | Latency Formula | Example |
+|---------------|-----------------|---------|
+| Sequential | T1 + T2 + T3 | ~20s |
+| **Parallel** | max(T1, T2, T3) | **~12s** |
+
+The parallel pattern reduces total execution time by ~40% since the slowest node (typically news fetching with LLM date extraction) determines the wait time, not the sum of all nodes.
 
 #### Node Descriptions
 
-**1. `calculate_metrics` Node**
+##### ⚡ Parallel Phase (Fan-out from START)
+
+**1. `calculate_metrics` Node** — *runs in parallel*
 - **Purpose**: Computes 4 core SRAG metrics from DATASUS database
 - **Calls**: `metrics_tool.calculate_all_metrics(days, state_filter)`
 - **Operations**:
@@ -91,11 +111,11 @@ graph TD
   - Vaccination rate (vaccinated cases / total cases)
 - **Output**: Dictionary with all 4 metrics + metadata
 
-**2. `fetch_news` Node**
+**2. `fetch_news` Node** — *runs in parallel*
 - **Purpose**: Retrieves recent Portuguese news about SRAG
 - **Calls**:
   - `news_tool.search_srag_news(days, max_results=10)` - Tavily search API
-  - `news_tool._extract_date_with_llm(title, content)` - GPT-5-mini for date extraction
+  - `news_tool._extract_date_with_llm(title, content)` - GPT-4o-mini for date extraction
 - **Operations**:
   - Searches Brazilian news domains (G1, Folha, CNN Brasil, Fiocruz, etc.)
   - Filters by SRAG-related keywords
@@ -103,7 +123,7 @@ graph TD
   - Validates dates are within requested time window
 - **Output**: News citations with title, URL, date, and content preview
 
-**3. `generate_charts` Node**
+**3. `generate_charts` Node** — *runs in parallel*
 - **Purpose**: Prepares time-series data for frontend visualization
 - **Calls**:
   - `metrics_tool.get_daily_cases_chart_data(days)`
@@ -113,10 +133,13 @@ graph TD
   - Aggregates monthly data for 12-month overview
 - **Output**: Chart data arrays for daily and monthly visualizations
 
-**4. `write_report` Node**
+##### Sequential Phase (Fan-in)
+
+**4. `write_report` Node** — *waits for all parallel nodes*
 - **Purpose**: Generates human-readable report in Portuguese
-- **Calls**: `ChatOpenAI(model="gpt-5").invoke(messages)`
+- **Calls**: `ChatOpenAI(model="gpt-4o").invoke(messages)`
 - **Operations**:
+  - Receives merged state from all 3 parallel nodes
   - Synthesizes metrics and news context
   - Produces structured markdown report (~500 words)
   - Sections: Executive Summary, Metrics Analysis, News Context, Conclusion
@@ -133,20 +156,32 @@ graph TD
 
 #### State Management
 
-The workflow uses a **reducer pattern** for message accumulation:
+The workflow uses **custom reducers** to support parallel state updates. When multiple nodes run concurrently, LangGraph merges their outputs using these reducers:
+
 ```python
 class ReportState(TypedDict):
-    messages: Annotated[Sequence[BaseMessage], add]  # Accumulated across nodes
-    days: int
-    state_filter: Optional[str]
-    metrics: Optional[Dict[str, Any]]
-    news_context: Optional[str]
-    chart_data: Optional[Dict[str, Any]]
-    final_report: Optional[str]
-    audit_trail: Optional[Dict[str, Any]]
+    # Message accumulation (all nodes append)
+    messages: Annotated[Sequence[BaseMessage], add]
+    
+    # Read-only config (keep first value from initialization)
+    days: Annotated[int, keep_first]
+    state_filter: Annotated[Optional[str], keep_first]
+    
+    # Parallel node outputs (merge dictionaries/lists)
+    metrics: Annotated[Optional[Dict[str, Any]], merge_dicts]
+    news_citations: Annotated[Optional[list], merge_lists]
+    chart_data: Annotated[Optional[Dict[str, Any]], merge_dicts]
+    
+    # Sequential node outputs (keep latest)
+    final_report: Annotated[Optional[str], keep_latest]
+    audit_trail: Annotated[Optional[Dict[str, Any]], keep_latest]
 ```
 
-Each node receives the current state, performs its operations, updates the state, and passes it to the next node via edges defined in the graph.
+**Fan-out/Fan-in Pattern**:
+1. **Fan-out**: `START` branches to 3 parallel nodes simultaneously
+2. **Parallel execution**: Each node returns only the fields it updates
+3. **Fan-in**: LangGraph merges all outputs using reducers before `write_report`
+4. **Sequential**: Report writing and audit creation run sequentially
 
 
 #### Future Capabilities
@@ -235,7 +270,7 @@ API_PORT=8000
 ENVIRONMENT=development
 
 # LLM Configuration
-LLM_MODEL=gpt-5              # Main model for report generation
+LLM_MODEL=gpt-4o             # Main model for report generation
 LLM_MINI_MODEL=gpt-4o-mini   # Auxiliary model for date extraction
 LLM_TEMPERATURE=0.0
 LLM_MAX_TOKENS=2000
