@@ -88,15 +88,6 @@ graph TD
     style parallel fill:#fff3e0,stroke:#ff9800,stroke-width:2px
 ```
 
-#### Performance Benefits
-
-| Execution Mode | Latency Formula | Example |
-|---------------|-----------------|---------|
-| Sequential | T1 + T2 + T3 | ~20s |
-| **Parallel** | max(T1, T2, T3) | **~12s** |
-
-The parallel pattern reduces total execution time by ~40% since the slowest node (typically news fetching with LLM date extraction) determines the wait time, not the sum of all nodes.
-
 #### Node Descriptions
 
 ##### ⚡ Parallel Phase (Fan-out from START)
