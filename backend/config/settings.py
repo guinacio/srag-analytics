@@ -1,5 +1,6 @@
 """Application configuration using Pydantic settings."""
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 from typing import Optional
 
 
@@ -14,6 +15,9 @@ class Settings(BaseSettings):
     )
 
     # Database
+    # NOTE: Default credentials are intentionally hardcoded for this challenge project
+    # to provide reviewers with all necessary secrets for immediate testing.
+    # In production, these should be set via environment variables with no defaults.
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_db: str = "srag_analytics"
@@ -55,17 +59,21 @@ class Settings(BaseSettings):
         )
 
     @property
-    def async_database_url(self) -> str:
-        """Get async database URL."""
-        return self.database_url.replace("postgresql+psycopg://", "postgresql+psycopg://")
-
-    @property
     def langgraph_checkpoint_url(self) -> str:
         """Get PostgreSQL connection string for LangGraph checkpointer."""
         return (
             f"postgresql://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+
+    @model_validator(mode="after")
+    def validate_api_keys(self) -> "Settings":
+        """Validate that required API keys are set and not empty."""
+        if not self.openai_api_key or not self.openai_api_key.strip():
+            raise ValueError("OPENAI_API_KEY is required and cannot be empty")
+        if not self.tavily_api_key or not self.tavily_api_key.strip():
+            raise ValueError("TAVILY_API_KEY is required and cannot be empty")
+        return self
 
 
 # Global settings instance

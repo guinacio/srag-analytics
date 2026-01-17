@@ -62,20 +62,3 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-@contextmanager
-def get_readonly_db() -> Generator[Session, None, None]:
-    """Get read-only database session for SQL agent."""
-    db = ReadOnlySessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
-def get_db_session() -> Session:
-    """Get database session (dependency injection for FastAPI)."""
-    db = SessionLocal()
-    try:
-        return db
-    finally:
-        db.close()

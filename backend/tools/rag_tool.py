@@ -1,7 +1,7 @@
 """RAG tool for data dictionary semantic search."""
 import logging
 from typing import List, Dict, Any, Optional
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from langchain_openai import OpenAIEmbeddings
 
 from backend.db.connection import get_db
@@ -94,7 +94,6 @@ class DictionaryRAGTool:
         if not fields:
             logger.info("Trying text-based search fallback...")
             with get_db() as db:
-                from sqlalchemy import or_
                 query_upper = query.upper()
                 text_results = db.query(DataDictionary).filter(
                     or_(

@@ -1,4 +1,5 @@
 """Streamlit frontend for SRAG Analytics."""
+import os
 import streamlit as st
 import requests
 import json
@@ -15,8 +16,8 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Configuration
-API_BASE_URL = "http://localhost:8000"
+# Configuration - API URL configurable via environment variable for deployment flexibility
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 # Custom CSS
 st.markdown("""

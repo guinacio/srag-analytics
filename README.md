@@ -263,7 +263,7 @@ ENVIRONMENT=development
 # LLM Configuration
 LLM_MODEL=gpt-4o             # Main model for report generation
 LLM_MINI_MODEL=gpt-4o-mini   # Auxiliary model for date extraction
-LLM_TEMPERATURE=0.0
+LLM_TEMPERATURE=0.3          # Slight creativity for natural report writing
 LLM_MAX_TOKENS=2000
 
 # News Search Configuration
@@ -557,7 +557,7 @@ The system implements multiple layers of safety and governance:
    - Supports A/B testing and prompt optimization
 
 4. **LLM Safety**
-   - Temperature set to 0.0 for deterministic outputs
+   - Temperature set to 0.3 for balanced creativity in report writing (0 used for date extraction)
    - Token limits enforced
    - Retries with exponential backoff
    - Error handling and graceful degradation

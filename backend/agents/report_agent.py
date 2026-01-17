@@ -9,8 +9,6 @@ import uuid
 
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.postgres import PostgresSaver
-from psycopg import Connection
-from psycopg.rows import dict_row
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from operator import add
@@ -101,15 +99,11 @@ class SRAGReportAgent:
             openai_api_key=settings.openai_api_key,
         )
 
-        # Initialize PostgreSQL connection and checkpointer for persistence
+        # Initialize PostgreSQL checkpointer for persistence using modern from_conn_string pattern
         try:
-            self.db_conn = Connection.connect(
-                settings.langgraph_checkpoint_url,
-                autocommit=True,
-                prepare_threshold=0,
-                row_factory=dict_row
+            self.checkpointer = PostgresSaver.from_conn_string(
+                settings.langgraph_checkpoint_url
             )
-            self.checkpointer = PostgresSaver(self.db_conn)
             self.checkpointer.setup()
             logger.info("PostgreSQL checkpointer initialized successfully")
         except Exception as e:

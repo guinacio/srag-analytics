@@ -47,11 +47,17 @@ class NewsTool:
         Returns:
             List of news articles with title, url, content, published_date
         """
-        # State name mapping for better news search
+        # Complete Brazilian state name mapping (all 26 states + Federal District)
         state_names = {
-            "SP": "São Paulo", "RJ": "Rio de Janeiro", "MG": "Minas Gerais",
-            "BA": "Bahia", "PR": "Paraná", "RS": "Rio Grande do Sul",
-            "SC": "Santa Catarina", "GO": "Goiás", "DF": "Distrito Federal"
+            "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas",
+            "BA": "Bahia", "CE": "Ceará", "DF": "Distrito Federal",
+            "ES": "Espírito Santo", "GO": "Goiás", "MA": "Maranhão",
+            "MT": "Mato Grosso", "MS": "Mato Grosso do Sul", "MG": "Minas Gerais",
+            "PA": "Pará", "PB": "Paraíba", "PR": "Paraná", "PE": "Pernambuco",
+            "PI": "Piauí", "RJ": "Rio de Janeiro", "RN": "Rio Grande do Norte",
+            "RS": "Rio Grande do Sul", "RO": "Rondônia", "RR": "Roraima",
+            "SC": "Santa Catarina", "SP": "São Paulo", "SE": "Sergipe",
+            "TO": "Tocantins"
         }
 
         if query is None:
