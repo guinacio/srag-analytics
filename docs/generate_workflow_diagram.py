@@ -50,7 +50,7 @@ def create_workflow_diagram():
         'calculate_metrics': 'calculate_metrics\n━━━━━━━━━━━━━━━━━\n• Taxa de aumento\n• Taxa mortalidade\n• Taxa UTI\n• Taxa vacinação',
         'fetch_news': 'fetch_news\n━━━━━━━━━━━━━━━━━\n• Tavily Search API\n• Brazilian domains\n• Date extraction (LLM)',
         'generate_charts': 'generate_charts\n━━━━━━━━━━━━━━━━━\n• Daily cases (30d)\n• Monthly cases (12m)\n• Moving average',
-        'write_report': 'write_report (Fan-in)\n━━━━━━━━━━━━━━━━━━━━━\n• GPT-4o synthesis\n• Metrics + News + Charts\n• PT-BR narrative',
+        'write_report': 'write_report (Fan-in)\n━━━━━━━━━━━━━━━━━━━━━\n• GPT-5 synthesis\n• Metrics + News + Charts\n• PT-BR narrative',
         'create_audit': 'create_audit\n━━━━━━━━━━━━━━━━━\n• Execution log\n• JSON audit trail',
         'END': 'END',
     }

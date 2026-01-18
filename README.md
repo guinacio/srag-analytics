@@ -70,7 +70,7 @@ graph TD
 
     C -.SQL.-> DB[(PostgreSQL)];
     D -.Tavily API.-> News[News Sources];
-    D -.OpenAI.-> LLM1[gpt-5-mini];
+    D -.OpenAI.-> LLM1[gpt-4o-mini];
     E -.SQL.-> DB;
     F -.OpenAI.-> LLM2[gpt-5];
 
@@ -106,7 +106,7 @@ graph TD
 - **Purpose**: Retrieves recent Portuguese news about SRAG
 - **Calls**:
   - `news_tool.search_srag_news(days, max_results=10)` - Tavily search API
-  - `news_tool._extract_date_with_llm(title, content)` - GPT-5-mini for date extraction
+  - `news_tool._extract_date_with_llm(title, content)` - gpt-4o-mini for date extraction
 - **Operations**:
   - Searches Brazilian news domains (G1, Folha, CNN Brasil, Fiocruz, etc.)
   - Filters by SRAG-related keywords
@@ -175,9 +175,17 @@ class ReportState(TypedDict):
 4. **Sequential**: Report writing and audit creation run sequentially
 
 
-#### Future Capabilities
+#### Chat Agent (ReAct Pattern)
 
-The system includes `sql_tool.py` - a safe SQL query tool designed for future user-driven data exploration features. Currently **not used in production** for security and reliability. See [SQL Tool Implementation Guide](docs/SQL_TOOL_IMPLEMENTATION_GUIDE.md) for details on enabling natural language database queries.
+The system also includes a **conversational chat agent** (`chat_agent.py`) that uses the ReAct pattern for interactive Q&A. Users can ask natural language questions and the agent autonomously decides which tools to use:
+
+- `query_database` - Executes validated SQL queries via `sql_tool.py`
+- `search_news` - Searches recent SRAG news
+- `lookup_field` - Looks up data dictionary definitions
+- `get_metrics` - Retrieves current SRAG metrics
+- `get_table_schema` - Gets database table schemas
+
+The SQL tool includes safety guardrails (SELECT-only, allowed tables whitelist, query validation). See [Architecture Documentation](docs/architecture.md) for details.
 
 ## Prerequisites
 
@@ -262,7 +270,8 @@ ENVIRONMENT=development
 
 # LLM Configuration
 LLM_MODEL=gpt-5              # Main model for report generation
-LLM_MINI_MODEL=gpt-5-mini    # Auxiliary model for date extraction, SQL, chat
+LLM_MINI_MODEL=gpt-4o-mini   # Auxiliary model for date extraction (fast, no extended thinking)
+LLM_CHAT_MODEL=gpt-5-mini    # Chat agent model
 LLM_TEMPERATURE=0.3          # Slight creativity for natural report writing
 LLM_MAX_TOKENS=2000
 
@@ -589,7 +598,8 @@ The system implements multiple layers of safety and governance:
 srag-analytics/
 ├── backend/
 │   ├── agents/          # LangGraph agents
-│   │   ├── report_agent.py      # Main orchestrator
+│   │   ├── report_agent.py      # Main orchestrator (fan-out/fan-in)
+│   │   ├── chat_agent.py        # ReAct chat agent for Q&A
 │   │   ├── prompts.py           # Centralized prompts
 │   │   └── guardrails.py        # Safety checks
 │   ├── tools/           # Agent tools
@@ -598,7 +608,7 @@ srag-analytics/
 │   │   ├── sql_tool.py          # Safe SQL execution
 │   │   └── rag_tool.py          # Data dictionary RAG
 │   ├── db/              # Database setup
-│   │   ├── init_db.py           # Schema creation
+│   │   ├── init_database.py     # Schema creation
 │   │   ├── ingestion.py         # CSV ingestion
 │   │   └── dictionary_parser.py # PDF parsing
 │   └── main.py          # FastAPI application
@@ -606,10 +616,10 @@ srag-analytics/
 │   └── app.py           # Streamlit UI (runs with uv)
 ├── data/                # SRAG CSV files
 ├── docs/                # Documentation
-│   ├── architecture_diagram.pdf
-│   ├── workflow_graph.png
-│   └── SQL_TOOL_IMPLEMENTATION_GUIDE.md
-├── logs/                # Execution logs (auto-generated)
+│   ├── architecture.md          # System architecture docs
+│   ├── architecture_diagram.pdf # Visual architecture
+│   └── workflow_graph.png       # LangGraph workflow
+├── logs/                # Execution logs (auto-generated, Docker volume)
 ├── docker-compose.yml   # Docker orchestration
 ├── Dockerfile.backend   # Backend container
 ├── pyproject.toml       # Python dependencies
@@ -669,9 +679,9 @@ This project is licensed under the MIT License. See [LICENSE](LICENSE) file for 
 
 ## Additional Resources
 
+- **Architecture Documentation**: [docs/architecture.md](docs/architecture.md)
 - **Architecture Diagram**: [docs/architecture_diagram.pdf](docs/architecture_diagram.pdf)
 - **Workflow Graph**: [docs/workflow_graph.png](docs/workflow_graph.png)
-- **SQL Tool Guide**: [docs/SQL_TOOL_IMPLEMENTATION_GUIDE.md](docs/SQL_TOOL_IMPLEMENTATION_GUIDE.md)
 - **Quick Start**: [QUICKSTART.md](QUICKSTART.md)
 - **Setup Guide**: [SETUP_INSTRUCTIONS.md](SETUP_INSTRUCTIONS.md)
 
