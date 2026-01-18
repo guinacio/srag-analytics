@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from backend.config.settings import settings
 from backend.db.connection import init_db
 from backend.agents.report_agent import report_agent
+from backend.agents.chat_agent import chat_agent
 from backend.agents.guardrails import sanitize_input, validate_output, apply_output_schema, log_security_event
 from backend.tools.metrics_tool import metrics_tool
 from backend.tools.news_tool import news_tool
@@ -97,6 +98,19 @@ class NewsRequest(BaseModel):
 class ExplainFieldRequest(BaseModel):
     """Request model for field explanation."""
     field_name: str
+
+
+class ChatRequest(BaseModel):
+    """Request model for chat messages."""
+    message: str
+    thread_id: Optional[str] = None
+
+
+class ChatResponse(BaseModel):
+    """Response model for chat messages."""
+    response: str
+    thread_id: str
+    tool_calls: list
 
 
 # Health check endpoint
@@ -306,6 +320,50 @@ async def get_table_schema(table_name: str):
     except Exception as e:
         logger.error(f"Get schema error: {e}")
         log_security_event("SQL_ERROR", f"Get schema failed for table {table_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# CHAT ENDPOINT - ReAct Agent for interactive Q&A
+# =============================================================================
+
+@app.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    Interactive chat with SRAG data assistant.
+
+    This endpoint uses a ReAct-style autonomous agent that can:
+    - Query the database using natural language
+    - Search for recent SRAG news
+    - Look up field definitions in the data dictionary
+    - Calculate current SRAG metrics
+
+    The agent decides which tools to use based on the user's question.
+    Conversations are persisted via thread_id for multi-turn interactions.
+    """
+    try:
+        import uuid
+
+        # Generate thread_id if not provided
+        thread_id = request.thread_id or str(uuid.uuid4())
+
+        logger.info(f"Chat request: thread_id={thread_id}, message_length={len(request.message)}")
+
+        # Process message through chat agent
+        result = chat_agent.chat(
+            message=request.message,
+            thread_id=thread_id,
+        )
+
+        return ChatResponse(
+            response=result["response"],
+            thread_id=result["thread_id"],
+            tool_calls=result["tool_calls"],
+        )
+
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        log_security_event("CHAT_ERROR", f"Chat failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

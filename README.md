@@ -70,9 +70,9 @@ graph TD
 
     C -.SQL.-> DB[(PostgreSQL)];
     D -.Tavily API.-> News[News Sources];
-    D -.OpenAI.-> LLM1[gpt-4o-mini];
+    D -.OpenAI.-> LLM1[gpt-5-mini];
     E -.SQL.-> DB;
-    F -.OpenAI.-> LLM2[gpt-4o];
+    F -.OpenAI.-> LLM2[gpt-5];
 
     subgraph parallel [" ⚡ PARALLEL EXECUTION"]
         C
@@ -106,7 +106,7 @@ graph TD
 - **Purpose**: Retrieves recent Portuguese news about SRAG
 - **Calls**:
   - `news_tool.search_srag_news(days, max_results=10)` - Tavily search API
-  - `news_tool._extract_date_with_llm(title, content)` - GPT-4o-mini for date extraction
+  - `news_tool._extract_date_with_llm(title, content)` - GPT-5-mini for date extraction
 - **Operations**:
   - Searches Brazilian news domains (G1, Folha, CNN Brasil, Fiocruz, etc.)
   - Filters by SRAG-related keywords
@@ -128,7 +128,7 @@ graph TD
 
 **4. `write_report` Node** — *waits for all parallel nodes*
 - **Purpose**: Generates human-readable report in Portuguese
-- **Calls**: `ChatOpenAI(model="gpt-4o").invoke(messages)`
+- **Calls**: `ChatOpenAI(model="gpt-5").invoke(messages)`
 - **Operations**:
   - Receives merged state from all 3 parallel nodes
   - Synthesizes metrics and news context
@@ -261,8 +261,8 @@ API_PORT=8000
 ENVIRONMENT=development
 
 # LLM Configuration
-LLM_MODEL=gpt-4o             # Main model for report generation
-LLM_MINI_MODEL=gpt-4o-mini   # Auxiliary model for date extraction
+LLM_MODEL=gpt-5              # Main model for report generation
+LLM_MINI_MODEL=gpt-5-mini    # Auxiliary model for date extraction, SQL, chat
 LLM_TEMPERATURE=0.3          # Slight creativity for natural report writing
 LLM_MAX_TOKENS=2000
 

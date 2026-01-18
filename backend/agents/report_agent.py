@@ -9,6 +9,7 @@ import uuid
 
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.postgres import PostgresSaver
+from psycopg import Connection
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from operator import add
@@ -25,10 +26,17 @@ logger = logging.getLogger(__name__)
 
 # Custom reducers for parallel state updates
 def keep_first(existing: Any, new: Any) -> Any:
-    """Reducer that keeps the first non-None value (for read-only fields)."""
-    if existing is not None:
+    """Reducer that keeps the first meaningful value (for read-only fields).
+
+    For numeric types, 0 is treated as 'not set' (same as None).
+    This ensures initial_state values are used when graph starts.
+    """
+    # Treat 0 as 'not set' for numeric types (like days parameter)
+    if existing is not None and existing != 0:
         return existing
-    return new
+    if new is not None and new != 0:
+        return new
+    return existing if existing is not None else new
 
 
 def keep_latest(existing: Any, new: Any) -> Any:
@@ -94,16 +102,19 @@ class SRAGReportAgent:
     def __init__(self):
         """Initialize the agent and graph."""
         self.llm = ChatOpenAI(
-            model="gpt-4o", # Originally gpt-5, changed to gpt-4o for speed responses on demo
+            model="gpt-5",
             temperature=0.3,
             openai_api_key=settings.openai_api_key,
         )
 
-        # Initialize PostgreSQL checkpointer for persistence using modern from_conn_string pattern
+        # Initialize PostgreSQL checkpointer for persistence using sync connection
         try:
-            self.checkpointer = PostgresSaver.from_conn_string(
-                settings.langgraph_checkpoint_url
+            self.db_connection = Connection.connect(
+                settings.langgraph_checkpoint_url,
+                autocommit=True,
+                prepare_threshold=0
             )
+            self.checkpointer = PostgresSaver(conn=self.db_connection)
             self.checkpointer.setup()
             logger.info("PostgreSQL checkpointer initialized successfully")
         except Exception as e:
@@ -188,8 +199,8 @@ class SRAGReportAgent:
             # Get recent SRAG news using the same period as metrics
             articles = news_tool.search_srag_news(days=days, max_results=10, state=state_filter)
 
-            # Format news context with same period
-            news_context = news_tool.get_recent_context(days=days, state=state_filter)
+            # Format news context using pre-fetched articles (avoids duplicate API call)
+            news_context = news_tool.get_recent_context(articles=articles)
             news_citations = news_tool.format_for_citation(articles)
 
             return {

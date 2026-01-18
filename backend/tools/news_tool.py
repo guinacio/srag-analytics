@@ -152,12 +152,12 @@ class NewsTool:
 
                 # Skip articles without dates - we can't verify their recency
                 if not published_date:
-                    logger.debug(f"Skipping article without date: {title[:50]}")
+                    logger.info(f"Skipping article without date: {title[:50]}")
                     continue
 
                 # Validate date is within the requested time window
                 if not self._is_date_within_range(published_date, safe_days):
-                    logger.debug(f"Skipping old article from {published_date}: {title[:50]}")
+                    logger.info(f"Skipping old article from {published_date}: {title[:50]}")
                     continue
 
                 articles.append(
@@ -192,17 +192,24 @@ class NewsTool:
             max_results=max_results,
         )
 
-    def get_recent_context(self, days: int = 30, state: Optional[str] = None) -> str:
+    def get_recent_context(
+        self,
+        days: int = 30,
+        state: Optional[str] = None,
+        articles: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """
         Get formatted recent news context for report generation.
 
         Args:
             days: Number of days to look back (default: 30)
             state: Optional state filter (UF code)
+            articles: Pre-fetched articles (optional, avoids duplicate API call)
 
         Returns a text summary of recent SRAG news.
         """
-        articles = self.search_srag_news(days=days, max_results=10, state=state)
+        if articles is None:
+            articles = self.search_srag_news(days=days, max_results=10, state=state)
 
         if not articles:
             return "Nenhuma noticia recente encontrada sobre SRAG."
@@ -366,22 +373,24 @@ class NewsTool:
             user_prompt = prompts.build_date_extraction_prompt(title, truncated_content)
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Fast and cheap model
+                model="gpt-5-mini",  # Fast model for date extraction
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0,
-                max_tokens=20,
+                # Note: gpt-5-* models have extended thinking that uses tokens
+                # Need high limit for reasoning + output
+                max_completion_tokens=1000,
             )
 
-            extracted_date = response.choices[0].message.content.strip()
+            raw_response = response.choices[0].message.content
+            extracted_date = raw_response.strip() if raw_response else ""
+            logger.debug(f"LLM extracted date: '{extracted_date}' for: {title[:40]}")
 
             # Validate format
             if extracted_date and extracted_date != "NONE":
                 try:
                     datetime.strptime(extracted_date, "%Y-%m-%d")
-                    logger.debug(f"LLM extracted date: {extracted_date}")
                     return extracted_date
                 except ValueError:
                     logger.debug(f"Invalid date format from LLM: {extracted_date}")

@@ -1,5 +1,6 @@
 """Streamlit frontend for SRAG Analytics."""
 import os
+import uuid
 import streamlit as st
 import requests
 import json
@@ -240,12 +241,13 @@ def main():
         """)
 
     # Main content tabs
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "Painel",
         "Métricas",
         "Notícias",
         "Relatório",
-        "Dicionário de Dados"
+        "Dicionário de Dados",
+        "Chat"
     ])
 
     # Tab 1: Dashboard Overview
@@ -507,6 +509,148 @@ def main():
                             st.markdown(f"**Similaridade:** {field.get('similarity', 0):.2f}")
                 else:
                     st.warning("Nenhum campo encontrado")
+
+    # Tab 6: Chat with SRAG Agent
+    with tab6:
+        st.header("Chat com Agente SRAG")
+        st.markdown("""
+        Converse com nosso agente de IA para explorar os dados de SRAG de forma interativa.
+        O agente pode:
+        - Consultar o banco de dados com perguntas em linguagem natural
+        - Buscar notícias recentes sobre SRAG
+        - Explicar campos do dicionário de dados
+        - Calcular métricas específicas
+        """)
+
+        # Initialize chat session state
+        if "chat_messages" not in st.session_state:
+            st.session_state.chat_messages = []
+        if "chat_thread_id" not in st.session_state:
+            st.session_state.chat_thread_id = str(uuid.uuid4())
+
+        # Button to clear chat history
+        col1, col2 = st.columns([4, 1])
+        with col2:
+            if st.button("Limpar Chat", use_container_width=True):
+                st.session_state.chat_messages = []
+                st.session_state.chat_thread_id = str(uuid.uuid4())
+                st.rerun()
+
+        st.divider()
+
+        # Display chat messages
+        for message in st.session_state.chat_messages:
+            with st.chat_message(message["role"]):
+                # Show tool calls for assistant messages (collapsed status)
+                if message["role"] == "assistant" and message.get("tool_calls"):
+                    tool_calls = message["tool_calls"]
+                    with st.status(f"✅ Concluído ({len(tool_calls)} ferramenta{'s' if len(tool_calls) > 1 else ''} utilizada{'s' if len(tool_calls) > 1 else ''})", state="complete", expanded=False):
+                        for tc in tool_calls:
+                            tool_name = tc.get('name', 'unknown')
+                            tool_icon = {
+                                'get_table_schema': '📋',
+                                'query_database': '🔍',
+                                'search_news': '📰',
+                                'lookup_field': '📖',
+                                'get_metrics': '📊'
+                            }.get(tool_name, '🔧')
+                            st.write(f"{tool_icon} **{tool_name}**")
+                            if tc.get('result_preview'):
+                                st.caption(f"{tc.get('result_preview', '')[:80]}...")
+
+                st.markdown(message["content"])
+
+        # Chat input
+        if prompt := st.chat_input("Pergunte sobre dados de SRAG..."):
+            # Add user message to chat history
+            st.session_state.chat_messages.append({
+                "role": "user",
+                "content": prompt
+            })
+
+            # Display user message
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Get assistant response
+            with st.chat_message("assistant"):
+                # Status widget for tool execution feedback
+                with st.status("Processando...", expanded=True) as status:
+                    st.write("🤔 Analisando sua pergunta...")
+
+                    response = api_request(
+                        "/chat",
+                        method="POST",
+                        data={
+                            "message": prompt,
+                            "thread_id": st.session_state.chat_thread_id
+                        }
+                    )
+
+                    if response:
+                        assistant_message = response.get("response", "Desculpe, não consegui processar sua mensagem.")
+                        tool_calls = response.get("tool_calls", [])
+
+                        # Update status with tool calls
+                        if tool_calls:
+                            status.update(label="Ferramentas utilizadas", state="running")
+                            for tc in tool_calls:
+                                tool_name = tc.get('name', 'unknown')
+                                tool_icon = {
+                                    'get_table_schema': '📋',
+                                    'query_database': '🔍',
+                                    'search_news': '📰',
+                                    'lookup_field': '📖',
+                                    'get_metrics': '📊'
+                                }.get(tool_name, '🔧')
+                                st.write(f"{tool_icon} **{tool_name}**")
+                                if tc.get('result_preview'):
+                                    st.caption(f"{tc.get('result_preview', '')[:80]}...")
+
+                            status.update(label=f"✅ Concluído ({len(tool_calls)} ferramenta{'s' if len(tool_calls) > 1 else ''} utilizada{'s' if len(tool_calls) > 1 else ''})", state="complete", expanded=False)
+                        else:
+                            status.update(label="✅ Concluído", state="complete", expanded=False)
+                    else:
+                        status.update(label="❌ Erro", state="error")
+
+                # Display response OUTSIDE the status widget
+                if response:
+                    st.markdown(assistant_message)
+
+                    # Add to chat history
+                    st.session_state.chat_messages.append({
+                        "role": "assistant",
+                        "content": assistant_message,
+                        "tool_calls": tool_calls
+                    })
+
+                    # Update thread_id from response
+                    st.session_state.chat_thread_id = response.get("thread_id", st.session_state.chat_thread_id)
+                else:
+                    error_msg = "Erro ao conectar com o servidor. Verifique se o backend está rodando."
+                    st.error(error_msg)
+                    st.session_state.chat_messages.append({
+                        "role": "assistant",
+                        "content": error_msg,
+                        "tool_calls": []
+                    })
+
+        # Example prompts
+        if not st.session_state.chat_messages:
+            st.markdown("### Exemplos de perguntas:")
+            example_cols = st.columns(2)
+            with example_cols[0]:
+                st.markdown("""
+                - "Qual a taxa de mortalidade em SP nos últimos 30 dias?"
+                - "Busque notícias recentes sobre surto de gripe"
+                - "O que significa o campo EVOLUCAO?"
+                """)
+            with example_cols[1]:
+                st.markdown("""
+                - "Quantos casos de UTI tivemos no Rio de Janeiro?"
+                - "Quais são as métricas atuais de SRAG?"
+                - "Compare a vacinação entre SP e RJ"
+                """)
 
 
 if __name__ == "__main__":
