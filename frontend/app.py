@@ -372,21 +372,113 @@ def main():
             # Audit trail download
             st.divider()
             st.subheader("Trilha de Auditoria")
-            audit_trail = report_data.get("audit_trail", {})
+            report_audit = report_data.get("audit_trail", {})
+            chat_audit = st.session_state.get("chat_audit_trail", [])
+
+            # Combine both audits
+            combined_audit = {
+                "report_generation": report_audit,
+                "chat_interactions": chat_audit,
+                "summary": {
+                    "total_chat_messages": len(chat_audit),
+                    "total_tool_calls": sum(
+                        len(entry.get("tool_calls", []))
+                        for entry in chat_audit
+                        if entry.get("type") == "assistant_response"
+                    ),
+                    "export_timestamp": datetime.now().isoformat(),
+                }
+            }
 
             col1, col2 = st.columns([3, 1])
             with col1:
-                st.info("Baixe a trilha de auditoria completa para transparência e governança")
+                chat_count = len([e for e in chat_audit if e.get("type") == "user_message"])
+                tool_count = sum(len(e.get("tool_calls", [])) for e in chat_audit if e.get("type") == "assistant_response")
+                st.info(f"Trilha de auditoria completa: Relatório + {chat_count} mensagens de chat + {tool_count} chamadas de ferramentas")
             with col2:
                 st.download_button(
                     label="Baixar JSON",
-                    data=json.dumps(audit_trail, indent=2, ensure_ascii=False),
+                    data=json.dumps(combined_audit, indent=2, ensure_ascii=False),
                     file_name=f"srag_audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
                     mime="application/json",
                 )
 
+            # Show chat audit details if available
+            if chat_audit:
+                with st.expander("🗨️ Histórico de Interações do Chat", expanded=False):
+                    for entry in chat_audit:
+                        entry_type = entry.get("type", "unknown")
+                        timestamp = entry.get("timestamp", "")[:19].replace("T", " ")
+
+                        if entry_type == "user_message":
+                            st.markdown(f"**👤 Usuário** ({timestamp})")
+                            st.caption(entry.get("content", "")[:200] + "..." if len(entry.get("content", "")) > 200 else entry.get("content", ""))
+                        elif entry_type == "assistant_response":
+                            st.markdown(f"**🤖 Assistente** ({timestamp})")
+                            tool_calls = entry.get("tool_calls", [])
+                            if tool_calls:
+                                tools_str = ", ".join([tc.get("name", "?") for tc in tool_calls])
+                                st.caption(f"Ferramentas: {tools_str}")
+                            st.caption(entry.get("content", "")[:200] + "..." if len(entry.get("content", "")) > 200 else entry.get("content", ""))
+                        elif entry_type == "error":
+                            st.markdown(f"**⚠️ Erro** ({timestamp})")
+                            st.caption(entry.get("error", ""))
+                        st.divider()
+
         else:
             st.info("Clique em 'Gerar Relatório' na barra lateral para iniciar a análise")
+
+            # Show chat audit even without report
+            chat_audit = st.session_state.get("chat_audit_trail", [])
+            if chat_audit:
+                st.divider()
+                st.subheader("Trilha de Auditoria (Chat)")
+
+                chat_only_audit = {
+                    "chat_interactions": chat_audit,
+                    "summary": {
+                        "total_chat_messages": len(chat_audit),
+                        "total_tool_calls": sum(
+                            len(entry.get("tool_calls", []))
+                            for entry in chat_audit
+                            if entry.get("type") == "assistant_response"
+                        ),
+                        "export_timestamp": datetime.now().isoformat(),
+                    }
+                }
+
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    chat_count = len([e for e in chat_audit if e.get("type") == "user_message"])
+                    tool_count = sum(len(e.get("tool_calls", [])) for e in chat_audit if e.get("type") == "assistant_response")
+                    st.info(f"Trilha de auditoria do chat: {chat_count} mensagens + {tool_count} chamadas de ferramentas")
+                with col2:
+                    st.download_button(
+                        label="Baixar JSON",
+                        data=json.dumps(chat_only_audit, indent=2, ensure_ascii=False),
+                        file_name=f"srag_chat_audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                    )
+
+                with st.expander("🗨️ Histórico de Interações do Chat", expanded=False):
+                    for entry in chat_audit:
+                        entry_type = entry.get("type", "unknown")
+                        timestamp = entry.get("timestamp", "")[:19].replace("T", " ")
+
+                        if entry_type == "user_message":
+                            st.markdown(f"**👤 Usuário** ({timestamp})")
+                            st.caption(entry.get("content", "")[:200] + "..." if len(entry.get("content", "")) > 200 else entry.get("content", ""))
+                        elif entry_type == "assistant_response":
+                            st.markdown(f"**🤖 Assistente** ({timestamp})")
+                            tool_calls = entry.get("tool_calls", [])
+                            if tool_calls:
+                                tools_str = ", ".join([tc.get("name", "?") for tc in tool_calls])
+                                st.caption(f"Ferramentas: {tools_str}")
+                            st.caption(entry.get("content", "")[:200] + "..." if len(entry.get("content", "")) > 200 else entry.get("content", ""))
+                        elif entry_type == "error":
+                            st.markdown(f"**⚠️ Erro** ({timestamp})")
+                            st.caption(entry.get("error", ""))
+                        st.divider()
 
     # Tab 2: Detailed Metrics
     with tab2:
@@ -527,6 +619,8 @@ def main():
             st.session_state.chat_messages = []
         if "chat_thread_id" not in st.session_state:
             st.session_state.chat_thread_id = str(uuid.uuid4())
+        if "chat_audit_trail" not in st.session_state:
+            st.session_state.chat_audit_trail = []
 
         # Button to clear chat history
         col1, col2 = st.columns([4, 1])
@@ -534,6 +628,7 @@ def main():
             if st.button("Limpar Chat", use_container_width=True):
                 st.session_state.chat_messages = []
                 st.session_state.chat_thread_id = str(uuid.uuid4())
+                # Note: Audit trail is NOT cleared - kept for governance
                 st.rerun()
 
         st.divider()
@@ -562,10 +657,21 @@ def main():
 
         # Chat input
         if prompt := st.chat_input("Pergunte sobre dados de SRAG..."):
+            # Record user message timestamp for audit
+            user_timestamp = datetime.now().isoformat()
+
             # Add user message to chat history
             st.session_state.chat_messages.append({
                 "role": "user",
                 "content": prompt
+            })
+
+            # Add to audit trail
+            st.session_state.chat_audit_trail.append({
+                "timestamp": user_timestamp,
+                "type": "user_message",
+                "thread_id": st.session_state.chat_thread_id,
+                "content": prompt[:500],  # Truncate for audit
             })
 
             # Display user message
@@ -626,6 +732,24 @@ def main():
 
                     # Update thread_id from response
                     st.session_state.chat_thread_id = response.get("thread_id", st.session_state.chat_thread_id)
+
+                    # Add assistant response to audit trail
+                    st.session_state.chat_audit_trail.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "type": "assistant_response",
+                        "thread_id": st.session_state.chat_thread_id,
+                        "content": assistant_message[:500],  # Truncate for audit
+                        "tool_calls": [
+                            {
+                                "name": tc.get("name", "unknown"),
+                                "result_preview": tc.get("result_preview", "")[:100]
+                            }
+                            for tc in tool_calls
+                        ] if tool_calls else [],
+                    })
+
+                    # Rerun to display message above chat input
+                    st.rerun()
                 else:
                     error_msg = "Erro ao conectar com o servidor. Verifique se o backend está rodando."
                     st.error(error_msg)
@@ -634,6 +758,14 @@ def main():
                         "content": error_msg,
                         "tool_calls": []
                     })
+                    # Add error to audit trail
+                    st.session_state.chat_audit_trail.append({
+                        "timestamp": datetime.now().isoformat(),
+                        "type": "error",
+                        "thread_id": st.session_state.chat_thread_id,
+                        "error": error_msg,
+                    })
+                    st.rerun()
 
         # Example prompts
         if not st.session_state.chat_messages:

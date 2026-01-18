@@ -415,7 +415,12 @@ class SRAGReportAgent:
         """Save full execution log to file for audit and debugging."""
         try:
             # Create logs directory if it doesn't exist
-            logs_dir = Path("logs")
+            # Use /app/logs in Docker, fallback to ./logs for local dev
+            import os
+            if os.path.exists("/app"):
+                logs_dir = Path("/app/logs")
+            else:
+                logs_dir = Path("logs")
             logs_dir.mkdir(exist_ok=True)
 
             # Generate log filename with timestamp
