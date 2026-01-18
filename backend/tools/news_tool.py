@@ -92,7 +92,12 @@ class NewsTool:
             "msn.com.br",
             "terra.com.br",
             "noticias.uol.com.br",
-            "saude.abril.com.br"
+            "saude.abril.com.br",
+            "agenciabrasil.ebc.com.br",
+            "viva.com.br",
+            "www.conass.org.br",
+            "midiamax.com.br",
+            "brasil61.com.br"
         ]
         
         # Explicitly exclude English-language domains and English sections
