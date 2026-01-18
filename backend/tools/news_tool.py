@@ -388,10 +388,20 @@ class NewsTool:
         # Look only in first 500 chars where publication date usually appears
         header = content[:500]
 
-        # Pattern 1: DD/MM/YYYY (Brazilian format)
+        # Pattern 1: DD/MM/YYYY (Brazilian format, 4-digit year)
         match = re.search(r'\b(\d{1,2})/(\d{1,2})/(202[4-6])\b', header)
         if match:
             day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            try:
+                return date(year, month, day).isoformat()
+            except ValueError:
+                pass
+
+        # Pattern 1b: DD/MM/YY (Brazilian format, 2-digit year like 25 for 2025)
+        match = re.search(r'\b(\d{1,2})/(\d{1,2})/(2[4-6])\b', header)
+        if match:
+            day, month, year_short = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            year = 2000 + year_short
             try:
                 return date(year, month, day).isoformat()
             except ValueError:

@@ -128,18 +128,21 @@ Extrair a data de publicação de artigos de notícias e retornar no formato YYY
 
 <context>
 Data atual: {today}
-Use esta data para interpretar referências relativas como "ontem", "quinta-feira passada", "nesta semana", etc.
+Apenas para referência - NÃO use para inferir datas incompletas.
 </context>
 
 <instruction>
-Procure por padrões de data como:
-- "quinta-feira (28)"
-- "divulgado nesta quinta"
-- "publicado em DD/MM/AAAA"
-- Datas no formato DD/MM/AAAA ou DD/MM/AA
-- Referências temporais relativas
+APENAS extraia datas que tenham o mês E ano explícitos. Por exemplo:
+- "publicado em 08/01/2026" → 2026-01-08
+- "01/09/25" ou "01/09/2025" → 2025-09-01
+- "8 de janeiro de 2026" → 2026-01-08
 
-Retorne apenas a data no formato YYYY-MM-DD ou NONE se não encontrar.
+NÃO infira datas de:
+- "quinta-feira (28)" sem mês/ano → NONE
+- "divulgado nesta quinta" → NONE
+- Referências relativas como "ontem" ou "semana passada" → NONE
+
+Se a data completa (dia, mês E ano) não estiver explícita, retorne NONE.
 </instruction>
 
 Data de publicação (YYYY-MM-DD):"""
