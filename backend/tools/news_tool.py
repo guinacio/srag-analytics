@@ -152,7 +152,10 @@ class NewsTool:
                 # Extract date (may be empty for some sources)
                 published_date = self._extract_published_date(result)
                 if not published_date:
-                    # Fallback: try to extract from content using LLM
+                    # Fast fallback: try regex patterns for Brazilian dates
+                    published_date = self._extract_date_with_regex(content)
+                if not published_date:
+                    # Slow fallback: use LLM only if regex fails
                     published_date = self._extract_date_with_llm(title, content)
 
                 # Skip articles without dates - we can't verify their recency
@@ -348,15 +351,72 @@ class NewsTool:
             days: Number of days back from today
 
         Returns:
-            True if date is within range, False otherwise
+            True if date is recent (not too old). Future dates are accepted
+            since they indicate parsing errors but the article is likely new.
         """
         try:
             article_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-            cutoff_date = (datetime.now(timezone.utc) - timedelta(days=days)).date()
+            today = datetime.now(timezone.utc).date()
+            cutoff_date = today - timedelta(days=days)
+            # Accept future dates (parsing errors) - article is likely new
+            # Only reject dates that are too old
             return article_date >= cutoff_date
         except (ValueError, TypeError):
             # If we can't parse the date, assume it's not valid
             return False
+
+    def _extract_date_with_regex(self, content: str) -> str:
+        """
+        Fast extraction of publication date using regex patterns.
+
+        Uses the first date found in content (publication dates are usually early).
+
+        Returns:
+            ISO date string (YYYY-MM-DD) or empty string if not found
+        """
+        import re
+        from datetime import date
+
+        # Month name mapping (Portuguese)
+        month_names = {
+            "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3,
+            "abril": 4, "maio": 5, "junho": 6, "julho": 7,
+            "agosto": 8, "setembro": 9, "outubro": 10,
+            "novembro": 11, "dezembro": 12
+        }
+
+        # Look only in first 500 chars where publication date usually appears
+        header = content[:500]
+
+        # Pattern 1: DD/MM/YYYY (Brazilian format)
+        match = re.search(r'\b(\d{1,2})/(\d{1,2})/(202[4-6])\b', header)
+        if match:
+            day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            try:
+                return date(year, month, day).isoformat()
+            except ValueError:
+                pass
+
+        # Pattern 2: YYYY-MM-DD (ISO format in URLs)
+        match = re.search(r'\b(202[4-6])-(\d{2})-(\d{2})\b', header)
+        if match:
+            year, month, day = int(match.group(1)), int(match.group(2)), int(match.group(3))
+            try:
+                return date(year, month, day).isoformat()
+            except ValueError:
+                pass
+
+        # Pattern 3: "D de MONTH de YYYY" (Portuguese)
+        match = re.search(r'\b(\d{1,2})\s+de\s+(\w+)\s+de\s+(202[4-6])\b', header.lower())
+        if match:
+            day, month_str, year = int(match.group(1)), match.group(2), int(match.group(3))
+            if month_str in month_names:
+                try:
+                    return date(year, month_names[month_str], day).isoformat()
+                except ValueError:
+                    pass
+
+        return ""
 
     def _extract_date_with_llm(self, title: str, content: str) -> str:
         """
@@ -378,14 +438,12 @@ class NewsTool:
             user_prompt = prompts.build_date_extraction_prompt(title, truncated_content)
 
             response = self.openai_client.chat.completions.create(
-                model="gpt-5-mini",  # Fast model for date extraction
+                model="gpt-4o-mini",  # Fast model without extended thinking for date extraction
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                # Note: gpt-5-* models have extended thinking that uses tokens
-                # Need high limit for reasoning + output
-                max_completion_tokens=1000,
+                max_tokens=20,  # Date is just YYYY-MM-DD or "NONE"
             )
 
             raw_response = response.choices[0].message.content
